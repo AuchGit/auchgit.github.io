@@ -7,6 +7,33 @@ import { useEffect, useState } from 'react'
 
 const url = import.meta.env.PUBLIC_SUPABASE_URL
 const key = import.meta.env.PUBLIC_SUPABASE_ANON_KEY
+
+// "Eingeloggt bleiben" off: the session must not outlive the browser session.
+// Supabase keeps it in localStorage, so a flag marks it as temporary, and the
+// first page load in a new browser session drops it before the client reads it.
+const EPHEMERAL = 'auch.ephemeral'
+const ALIVE = 'auch.alive'
+if (typeof window !== 'undefined' && url) {
+  try {
+    if (localStorage.getItem(EPHEMERAL) === '1' && !sessionStorage.getItem(ALIVE)) {
+      localStorage.removeItem(`sb-${new URL(url).hostname.split('.')[0]}-auth-token`)
+      localStorage.removeItem(EPHEMERAL)
+    }
+    sessionStorage.setItem(ALIVE, '1')
+  } catch { /* storage blocked: Supabase's default behaviour applies */ }
+}
+
+/** Call before signing in. */
+export function setRemember(remember) {
+  try {
+    if (remember) localStorage.removeItem(EPHEMERAL)
+    else {
+      localStorage.setItem(EPHEMERAL, '1')
+      sessionStorage.setItem(ALIVE, '1')
+    }
+  } catch { /* ignore */ }
+}
+
 export const supabase = url && key ? createClient(url, key) : null
 
 /** Where confirmation and reset mails send people back to. */

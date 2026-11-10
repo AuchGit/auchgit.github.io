@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { supabase, welcomeUrl, resetUrl, germanError } from '../../lib/supabase.js'
+import { supabase, welcomeUrl, resetUrl, germanError, setRemember } from '../../lib/supabase.js'
 import { Field, Notice, Spinner } from './ui.jsx'
 
 const TABS = [
@@ -16,6 +16,7 @@ export default function AuthForm({ initial = 'login' }) {
   const [error, setError] = useState(null)
   const [done, setDone] = useState(null)
   const [unconfirmed, setUnconfirmed] = useState(false)
+  const [remember, setRememberState] = useState(true)
 
   function switchTo(m) {
     setMode(m)
@@ -41,6 +42,7 @@ export default function AuthForm({ initial = 'login' }) {
     setBusy(true)
     try {
       if (mode === 'login') {
+        setRemember(remember)
         const { error } = await supabase.auth.signInWithPassword({ email: mail, password })
         if (error) {
           if (/email not confirmed/i.test(error.message)) setUnconfirmed(true)
@@ -125,6 +127,21 @@ export default function AuthForm({ initial = 'login' }) {
               hint={mode === 'signup' ? 'Mindestens 6 Zeichen.' : null}
               required
             />
+          )}
+
+          {mode === 'login' && (
+            <label className="flex cursor-pointer items-center gap-3 text-sm text-ink-200 select-none">
+              <button
+                type="button"
+                role="switch"
+                aria-checked={remember}
+                onClick={() => setRememberState(v => !v)}
+                className={`relative h-6 w-11 shrink-0 rounded-full transition ${remember ? 'bg-brand-500' : 'bg-white/15'}`}
+              >
+                <span className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${remember ? 'translate-x-5' : ''}`} />
+              </button>
+              <span>Eingeloggt bleiben <span className="text-ink-500">{remember ? '' : '(nur bis du den Browser zumachst)'}</span></span>
+            </label>
           )}
 
           {error && (

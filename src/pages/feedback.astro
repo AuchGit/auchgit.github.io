@@ -1,0 +1,11 @@
+---
+import Base from '../layouts/Base.astro'
+import Feedback from '../components/account/Feedback.jsx'
+---
+<Base title="Feedback" description="Bug gefunden oder eine Idee? Her damit.">
+  <section class="mx-auto max-w-2xl px-5 pt-16 sm:px-8">
+    <h1 class="font-display text-4xl font-bold">Feedback</h1>
+    <p class="mb-8 mt-3 text-lg text-ink-300">Bug gefunden oder eine Idee, was noch fehlt? Her damit, ich lese alles.</p>
+    <Feedback client:only="react" />
+  </section>
+</Base>

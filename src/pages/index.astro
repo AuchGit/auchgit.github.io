@@ -5,39 +5,37 @@ import DownloadButton from '../components/DownloadButton.astro'
 import Art from '../components/Art.astro'
 import { site, games, tools, launcher, news, shortDate, alpha, projectUrl, allProjects } from '../lib/site.js'
 
-const stack = games.filter(g => g.art).slice(0, 3)
 const recent = news.slice(0, 6)
 const projectOf = id => allProjects.find(p => p.id === id) || (id === 'launcher' ? launcher : null)
 ---
 <Base>
   <!-- Hero -->
-  <section class="mx-auto max-w-7xl px-5 pb-6 pt-12 sm:px-8 lg:pt-16">
+  <section class="mx-auto grid max-w-7xl items-center gap-12 px-5 pb-6 pt-12 sm:px-8 lg:grid-cols-[1fr_1.25fr] lg:pt-20">
     <h1 class="sr-only">{site.brand}</h1>
-    <!-- fanned covers -->
-    <div class="reveal relative mx-auto h-[19rem] w-full max-w-3xl sm:h-[27rem]">
-      {stack.map((g, i) => {
-        const pos = [
-          'left-0 top-10 -rotate-6',
-          'right-0 top-0 rotate-[5deg]',
-          'left-1/2 top-24 -translate-x-1/2 rotate-[-1deg] z-10',
-        ][i]
-        return (
-          <a href={`/spiele/${g.id}/`} class:list={['group absolute w-[70%] transition duration-500 hover:z-20 hover:scale-[1.03] hover:rotate-0', pos]}>
-            <Art project={g} class="aspect-[16/10] rounded-2xl ring-1 ring-white/15" eager />
-            <div class="absolute inset-0 rounded-2xl" style={`box-shadow: 0 40px 90px -30px ${alpha(g.accent, 0.75)}`}></div>
-            <span class="chip absolute bottom-3 left-3 bg-black/55 text-white backdrop-blur">{g.name}</span>
-          </a>
-        )
-      })}
+    <div class="reveal">
+      <div class="flex items-center gap-3">
+        <img src="/logo.svg" alt="" class="h-11 w-11" />
+        <span class="font-display text-2xl font-bold">AuchLauncher</span>
+      </div>
+      <p class="mt-6 text-lg leading-relaxed text-ink-200">
+        Moin! Der Launcher ist ein kleines Programm für Windows, über das du meine Games holst und startest.
+      </p>
+      <ul class="mt-5 space-y-2.5 text-ink-300">
+        <li class="flex gap-3"><span class="mt-[0.6em] h-1.5 w-1.5 shrink-0 rounded-full bg-brand-400"></span>Alle Games an einem Ort, mit einem Klick installiert</li>
+        <li class="flex gap-3"><span class="mt-[0.6em] h-1.5 w-1.5 shrink-0 rounded-full bg-brand-400"></span>Updates laufen von allein, du musst dich um nichts kümmern</li>
+        <li class="flex gap-3"><span class="mt-[0.6em] h-1.5 w-1.5 shrink-0 rounded-full bg-brand-400"></span>Neue Games tauchen einfach auf</li>
+      </ul>
+      <div class="mt-8 flex flex-wrap gap-3">
+        <DownloadButton release={launcher.latest} label="Launcher laden" />
+        <a href="/spiele/" class="btn btn-soft">Spiele</a>
+      </div>
+      <p class="mt-4 text-sm text-ink-500">
+        Für Windows 10 und 11, kostenlos. Mit einem <a href="/konto/" class="font-semibold text-brand-300 hover:text-white">Account</a> kannst du außerdem deine Leute adden.
+      </p>
     </div>
-    <div class="reveal mt-10 flex flex-wrap justify-center gap-3" style="animation-delay:120ms">
-      <DownloadButton release={launcher.latest} label="Launcher laden" />
-      <a href="/spiele/" class="btn btn-soft">Spiele</a>
-    </div>
-    <div class="reveal mx-auto mt-10 max-w-2xl text-center" style="animation-delay:200ms">
-      <p class="text-lg leading-relaxed text-ink-200">Moin! Hier landen meine Games und Tools. Hol dir den Launcher, dann hast du alles an einem Ort und Updates laufen von allein.</p>
-      <p class="mt-3 text-ink-400">Mit einem <a href="/konto/" class="font-semibold text-brand-300 hover:text-white">Account</a> kannst du deine Leute adden. Chat und wer gerade was zockt kommen als Nächstes.</p>
-    </div>
+    <a href="/launcher/" class="reveal block overflow-hidden rounded-2xl ring-1 ring-white/10 shadow-[0_50px_120px_-40px_rgba(109,93,252,0.7)] transition hover:scale-[1.01]" style="animation-delay:120ms">
+      <img src="/img/launcher-library.jpg" alt="So sieht der AuchLauncher aus" class="w-full" />
+    </a>
   </section>
 
   <!-- Games -->
