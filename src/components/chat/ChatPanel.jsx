@@ -4,6 +4,7 @@ import { useSocial } from './useSocial'
 import { useLauncher } from './shim'
 import { api } from './shim'
 import { PersonAvatar, ago } from './Person'
+import { EmojiButton, InviteButton, InviteCard, LinkPreview, emojiOnly, onlyImage } from './Extras'
 
 const URL_RE = /(https?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]])/gi
 const GROUP_GAP = 5 * 60 * 1000
@@ -59,6 +60,9 @@ export default function ChatPanel() {
   const friends = useSocial(s => s.friends)
   const uid = useSocial(s => s.session?.user?.id)
   const sending = useSocial(s => s.sending)
+  const typingMap = useSocial(s => (s.chat ? s.typing[s.chat.convId] : null))
+  const reads = useSocial(s => (s.chat ? s.reads[s.chat.convId] : null))
+  const [, tick] = useState(0)
   const { send, closeChat, leaveGroup } = useSocial.getState()
   const openModal = useLauncher(s => s.openModal)
 
@@ -82,6 +86,13 @@ export default function ChatPanel() {
     if (el && stick.current) el.scrollTop = el.scrollHeight
   }, [list?.length, chat?.convId])
 
+  // "… schreibt" fades out by itself: re-render once a second while someone types.
+  useEffect(() => {
+    if (!typingMap || !Object.keys(typingMap).length) return
+    const t = setInterval(() => tick(n => n + 1), 1000)
+    return () => clearInterval(t)
+  }, [typingMap])
+
   useEffect(() => {
     const el = input.current
     if (!el) return
@@ -99,6 +110,22 @@ export default function ChatPanel() {
     stick.current = true
     try { await send(body) } catch (e) { setError(e.message); setText(body) }
   }
+
+  function insert(emoji) {
+    const el = input.current
+    const start = el?.selectionStart ?? text.length
+    const end = el?.selectionEnd ?? text.length
+    const next = text.slice(0, start) + emoji + text.slice(end)
+    setText(next)
+    requestAnimationFrame(() => { el?.focus(); el?.setSelectionRange(start + emoji.length, start + emoji.length) })
+  }
+
+  const typers = chat ? useSocial.getState().typingIn(chat.convId) : []
+  // "Gesehen" under your newest message, once the others have read up to it.
+  const lastMine = list ? [...list].reverse().find(m => m.sender === uid && m.kind !== 'system') : null
+  const seenBy = lastMine && reads
+    ? Object.entries(reads).filter(([id, at]) => id !== uid && at && new Date(at) >= new Date(lastMine.created_at)).map(([id]) => id)
+    : []
 
   // Who sent what: friends first (fresh names and pictures), then group members.
   const person = id => friends.find(f => f.user_id === id) || chat.members?.find(m => m.user_id === id) || { user_id: id, player_name: '?' }
@@ -161,6 +188,7 @@ export default function ChatPanel() {
       </div>
 
       <div ref={scroller} onScroll={e => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60 }}
+        onLoadCapture={() => { const el = scroller.current; if (el && stick.current) el.scrollTop = el.scrollHeight }}
         className="selectable min-h-0 flex-1 overflow-y-auto px-3 py-3">
         {!list && <div className="grid h-full place-items-center text-ink-500"><Loader2 size={18} className="animate-spin" /></div>}
         {list && list.length === 0 && (
@@ -190,14 +218,30 @@ export default function ChatPanel() {
                     {!mine && (last
                       ? <button onClick={() => profile(m.sender)} className="shrink-0 rounded-full" title={who.player_name}><PersonAvatar id={m.sender} name={who.player_name} url={who.avatar_url} size={24} /></button>
                       : <span className="w-6 shrink-0" />)}
-                    <div title={time(m.created_at)}
-                      className={`max-w-[78%] whitespace-pre-wrap break-words rounded-2xl px-3 py-[7px] text-[13px] leading-snug ${mine
-                        ? 'bg-gradient-to-br from-brand-500 to-[#8a4cf0] text-white rounded-br-md'
-                        : 'bg-white/[0.07] text-ink-100 rounded-bl-md'}`}>
-                      <Text body={m.body} />
+                    <div title={time(m.created_at)} className={`flex max-w-[78%] flex-col ${mine ? 'items-end' : 'items-start'}`}>
+                      {m.kind === 'invite' ? <InviteCard m={m} mine={mine} who={who?.player_name} />
+                        : emojiOnly(m.body) ? <div className={`leading-tight ${emojiOnly(m.body) === 1 ? 'text-[44px]' : 'text-[34px]'}`}>{m.body}</div>
+                        : onlyImage(m.body) ? <LinkPreview body={m.body} />
+                        : (
+                          <>
+                            <div className={`whitespace-pre-wrap break-words rounded-2xl px-3 py-[7px] text-[13px] leading-snug ${mine
+                              ? 'bg-gradient-to-br from-brand-500 to-[#8a4cf0] text-white rounded-br-md'
+                              : 'bg-white/[0.07] text-ink-100 rounded-bl-md'}`}>
+                              <Text body={m.body} />
+                            </div>
+                            <LinkPreview body={m.body} />
+                          </>
+                        )}
                     </div>
                   </div>
-                  {last && <div className={`mt-0.5 text-[10px] text-ink-500 ${mine ? 'text-right' : 'pl-8'}`}>{time(m.created_at)}</div>}
+                  {last && (
+                    <div className={`mt-0.5 text-[10px] text-ink-500 ${mine ? 'text-right' : 'pl-8'}`}>
+                      {time(m.created_at)}
+                      {m === lastMine && seenBy.length > 0 && (
+                        <span className="text-brand-300"> · {group ? `gesehen von ${seenBy.map(id => person(id).player_name).slice(0, 3).join(', ')}${seenBy.length > 3 ? ` +${seenBy.length - 3}` : ''}` : 'gesehen'}</span>
+                      )}
+                    </div>
+                  )}
                 </>
               )}
             </Fragment>
@@ -205,14 +249,22 @@ export default function ChatPanel() {
         })}
       </div>
 
-      <div className="border-t border-white/[0.06] p-3">
+      <div className="relative border-t border-white/[0.06] p-3">
+        {typers.length > 0 && (
+          <div className="absolute -top-6 left-4 flex items-center gap-1.5 text-[11.5px] text-ink-400">
+            <span className="flex gap-0.5">{[0, 1, 2].map(i => <span key={i} className="h-1 w-1 animate-bounce rounded-full bg-ink-400" style={{ animationDelay: `${i * 120}ms` }} />)}</span>
+            {typers.length === 1 ? `${typers[0]} schreibt …` : `${typers.slice(0, 2).join(' und ')} schreiben …`}
+          </div>
+        )}
         {error && <div className="mb-2 rounded-lg bg-rose-500/10 px-3 py-1.5 text-[12px] text-rose-200">{error}</div>}
-        <div className="flex items-end gap-2 rounded-xl border border-white/10 bg-white/[0.05] py-1.5 pl-3 pr-1.5 focus-within:border-brand-400">
+        <div className="flex items-end gap-1 rounded-xl border border-white/10 bg-white/[0.05] py-1.5 pl-1.5 pr-1.5 focus-within:border-brand-400">
+          <InviteButton onError={setError} />
           <textarea ref={input} rows={1} value={text} maxLength={2000}
-            onChange={e => setText(e.target.value)}
+            onChange={e => { setText(e.target.value); if (e.target.value.trim()) useSocial.getState().typingPing() }}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit() } }}
             placeholder={group ? `Nachricht an ${chat.title}` : `Nachricht an ${friend.player_name}`}
-            className="max-h-[132px] min-h-[28px] flex-1 resize-none bg-transparent py-1 text-[13px] leading-snug text-white outline-none focus-visible:outline-none placeholder:text-ink-500" />
+            className="max-h-[132px] min-h-[28px] flex-1 resize-none bg-transparent px-1.5 py-1 text-[13px] leading-snug text-white outline-none focus-visible:outline-none placeholder:text-ink-500" />
+          <EmojiButton onPick={insert} />
           <button onClick={submit} disabled={!text.trim() || sending} title="Senden (Enter)"
             className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-brand-500 text-white transition hover:brightness-110 disabled:bg-white/[0.06] disabled:text-ink-500">
             {sending ? <Loader2 size={15} className="animate-spin" /> : <SendHorizontal size={15} />}

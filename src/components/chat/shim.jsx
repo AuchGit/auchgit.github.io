@@ -11,6 +11,16 @@ export const useLauncher = create(set => ({
   closeModal: () => set({ modal: null }),
 }))
 
+// Games for invites (the same list the launcher shows).
+if (typeof window !== 'undefined') {
+  fetch('/api/catalog.json').then(r => (r.ok ? r.json() : null)).then(c => {
+    if (Array.isArray(c?.games)) useLauncher.setState({ catalog: { games: c.games } })
+  }).catch(() => {})
+}
+
+/** The website can't start games; invites link to the game page instead. */
+export const gameState = () => ({ installed: false })
+
 const open = url => { window.open(url, '_blank', 'noopener,noreferrer'); return Promise.resolve() }
 export const api = { openLink: open, openUrl: open }
 

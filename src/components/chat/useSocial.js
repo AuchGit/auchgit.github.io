@@ -31,6 +31,9 @@ let channels = []
 let presence = null
 let timers = []
 let inited = false
+let convChannel = null // the open chat: typing and read receipts (broadcast, nothing stored)
+let lastTypingPing = 0
+const TYPING_MS = 4000
 
 const backgrounded = () => typeof document !== 'undefined' && document.visibilityState === 'hidden'
 
@@ -46,6 +49,8 @@ export const useSocial = create((set, get) => ({
   messages: {},
   sending: false,
   game: null,
+  typing: {}, // convId -> { userId: { name, at } }
+  reads: {},  // convId -> { userId: last read timestamp }
 
   // ------------------------------------------------------------------ lifecycle
   async init() {
@@ -88,12 +93,17 @@ export const useSocial = create((set, get) => ({
     channels.push(presence)
 
     timers.push(setInterval(() => get().loadMe(), PROFILE_REFRESH))
-    const onFocus = () => { get().loadFriends(); get().loadConvs() }
+    const onFocus = () => {
+      get().loadFriends()
+      if (get().chat) get()._markRead(get().chat.convId)
+      else get().loadConvs()
+    }
     window.addEventListener('focus', onFocus)
     timers.push(() => window.removeEventListener('focus', onFocus))
   },
 
   _stop() {
+    get()._leaveConv()
     for (const c of channels) supabase?.removeChannel(c)
     channels = []
     presence = null
@@ -155,7 +165,9 @@ export const useSocial = create((set, get) => ({
     }
     const open = get().chat?.convId === m.conversation_id
     if (m.sender !== uid) {
-      if (open && !backgrounded()) supabase.rpc('social_mark_read', { conv: m.conversation_id }).then(() => get().loadConvs())
+      const t = get().typing[m.conversation_id]
+      if (t?.[m.sender]) { const { [m.sender]: _, ...rest } = t; set({ typing: { ...get().typing, [m.conversation_id]: rest } }) }
+      if (open && !backgrounded()) get()._markRead(m.conversation_id)
       else get().loadConvs()
       if (open && get().chat.kind === 'group' && m.kind === 'system') get()._loadMembers(m.conversation_id)
       if ((!open || backgrounded()) && get().notify && m.kind !== 'system') {
@@ -174,6 +186,7 @@ export const useSocial = create((set, get) => ({
   // ------------------------------------------------------------------ sidebar + chat
   setStage(stage) {
     save('sidebar', stage)
+    if (stage === 'rail') get()._leaveConv()
     set({ stage, ...(stage === 'rail' ? { chat: null } : {}) })
   },
 
@@ -207,11 +220,74 @@ export const useSocial = create((set, get) => ({
       .order('created_at', { ascending: false })
       .limit(80)
     set({ messages: { ...get().messages, [convId]: (data || []).reverse() } })
+    get()._joinConv(convId)
+    await get()._markRead(convId)
+  },
+
+  closeChat() {
+    get()._leaveConv()
+    set({ chat: null })
+  },
+
+  /** Live channel of the open chat: who is typing, who has read up to where. */
+  _joinConv(convId) {
+    get()._leaveConv()
+    const uid = get().session.user.id
+    convChannel = supabase
+      .channel(`conv-${convId}`, { config: { broadcast: { self: false } } })
+      .on('broadcast', { event: 'typing' }, ({ payload }) => {
+        if (!payload?.user || payload.user === uid) return
+        const t = { ...(get().typing[convId] || {}), [payload.user]: { name: payload.name, at: Date.now() } }
+        set({ typing: { ...get().typing, [convId]: t } })
+      })
+      .on('broadcast', { event: 'read' }, ({ payload }) => {
+        if (payload?.user && payload.at) get()._setRead(convId, payload.user, payload.at)
+      })
+      .subscribe()
+    supabase.from('social_members').select('user_id, last_read_at').eq('conversation_id', convId).then(({ data }) => {
+      if (data) set({ reads: { ...get().reads, [convId]: { ...Object.fromEntries(data.map(r => [r.user_id, r.last_read_at])), ...(get().reads[convId] || {}) } } })
+    })
+  },
+
+  _leaveConv() {
+    if (convChannel) supabase?.removeChannel(convChannel)
+    convChannel = null
+  },
+
+  _setRead(convId, user, at) {
+    const prev = get().reads[convId]?.[user]
+    if (prev && new Date(prev) >= new Date(at)) return
+    set({ reads: { ...get().reads, [convId]: { ...(get().reads[convId] || {}), [user]: at } } })
+  },
+
+  async _markRead(convId) {
     await supabase.rpc('social_mark_read', { conv: convId })
+    const list = get().messages[convId]
+    const at = list?.length ? list[list.length - 1].created_at : new Date().toISOString()
+    if (convChannel && get().chat?.convId === convId) {
+      convChannel.send({ type: 'broadcast', event: 'read', payload: { user: get().session?.user?.id, at } })
+    }
     get().loadConvs()
   },
 
-  closeChat: () => set({ chat: null }),
+  /** Called while typing; tells the others at most every 2.5 s. */
+  typingPing() {
+    const now = Date.now()
+    if (!convChannel || now - lastTypingPing < 2500) return
+    lastTypingPing = now
+    convChannel.send({ type: 'broadcast', event: 'typing', payload: { user: get().session?.user?.id, name: get().me?.player_name || '' } })
+  },
+
+  /** Names of the people typing in a chat right now. */
+  typingIn(convId) {
+    const t = get().typing[convId] || {}
+    return Object.values(t).filter(x => Date.now() - x.at < TYPING_MS).map(x => x.name)
+  },
+
+  /** Invite the chat to play a game together. */
+  async sendInvite(game) {
+    await get().send(`Lust auf ${game.name}?`, { kind: 'invite', payload: { game: game.id, name: game.name, art: game.artUrl || null, accent: game.accent || null } })
+  },
 
   async createGroup(name, memberIds) {
     const { data: convId, error } = await supabase.rpc('social_create_group', { group_name: name.trim().slice(0, 60), member_ids: memberIds })
@@ -233,6 +309,7 @@ export const useSocial = create((set, get) => ({
     if (error) throw new Error(germanError(error))
     const messages = { ...get().messages }
     delete messages[convId]
+    if (get().chat?.convId === convId) get()._leaveConv()
     set({ messages, ...(get().chat?.convId === convId ? { chat: null } : {}) })
     await get().loadConvs()
   },
@@ -246,18 +323,19 @@ export const useSocial = create((set, get) => ({
       || null
   },
 
-  async send(body) {
+  async send(body, extra = {}) {
     const chat = get().chat
     const text = body.trim()
     if (!chat || !text) return
     set({ sending: true })
     const { data, error } = await supabase
       .from('social_messages')
-      .insert({ conversation_id: chat.convId, sender: get().session.user.id, body: text.slice(0, 2000) })
+      .insert({ conversation_id: chat.convId, sender: get().session.user.id, body: text.slice(0, 2000), kind: extra.kind || 'text', payload: extra.payload || null })
       .select('id, conversation_id, sender, kind, body, payload, created_at')
       .single()
     set({ sending: false })
     if (error) throw new Error(germanError(error))
+    lastTypingPing = 0
     get()._onMessage(data)
     get().loadConvs()
   },
