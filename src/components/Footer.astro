@@ -1,0 +1,35 @@
+---
+import { site, games, tools, launcher } from '../lib/site.js'
+const year = new Date().getFullYear()
+---
+<footer class="mt-32 border-t border-white/[0.06] bg-ink-950/60">
+  <div class="mx-auto grid max-w-7xl gap-10 px-5 py-14 sm:px-8 md:grid-cols-[1.4fr_1fr_1fr_1fr]">
+    <div>
+      <a href="/" class="flex items-center gap-2.5">
+        <img src="/logo.svg" alt="" class="h-8 w-8" />
+        <span class="font-display text-lg font-bold">{site.brand}</span>
+      </a>
+    </div>
+    <div>
+      <div class="label mb-3">Spiele</div>
+      <ul class="space-y-2 text-sm">{games.map(g => <li><a class="text-ink-300 hover:text-white" href={`/spiele/${g.id}/`}>{g.name}</a></li>)}</ul>
+    </div>
+    <div>
+      <div class="label mb-3">Tools</div>
+      <ul class="space-y-2 text-sm">{tools.map(t => <li><a class="text-ink-300 hover:text-white" href={`/tools/${t.id}/`}>{t.name}</a></li>)}</ul>
+    </div>
+    <div>
+      <div class="label mb-3">Mehr</div>
+      <ul class="space-y-2 text-sm">
+        <li><a class="text-ink-300 hover:text-white" href="/launcher/">{launcher.name}</a></li>
+        <li><a class="text-ink-300 hover:text-white" href="/neuigkeiten/">Neuigkeiten</a></li>
+      </ul>
+    </div>
+  </div>
+  <div class="border-t border-white/[0.05]">
+    <div class="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2 px-5 py-6 text-xs text-ink-500 sm:px-8">
+      <span>&copy; {year} {site.brand}</span>
+      <span>Updates sind signiert und werden vor dem Installieren geprüft.</span>
+    </div>
+  </div>
+</footer>

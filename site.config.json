@@ -1,0 +1,28 @@
+{
+  "brand": "AuchGit",
+  "url": "https://auchgit.github.io",
+  "claim": "Hier landet alles, was ich baue.",
+  "intro": "Spiele, Tools und was sonst noch so entsteht. Mit dem Launcher hast du alles auf einmal, und Updates kommen von selbst.",
+  "catalog": "https://raw.githubusercontent.com/AuchGit/AuchLauncher/main/public/catalog/games.json",
+  "launcher": {
+    "repo": "AuchGit/AuchLauncher",
+    "name": "AuchLauncher"
+  },
+  "tools": [
+    {
+      "id": "nerdshelf",
+      "name": "NerdShelf",
+      "tagline": "D&D, Magic und Warhammer 40k in einer App",
+      "description": "Begleiter für Tabletop- und Kartenspiele: D&D, Magic: The Gathering und Warhammer 40k in einer App. Für Windows oder direkt im Browser.",
+      "genres": [
+        "Dungeons & Dragons",
+        "Magic: The Gathering",
+        "Warhammer 40k"
+      ],
+      "accent": "#3b5bdb",
+      "repo": "AuchGit/NerdShelf",
+      "web": "https://auchgit.github.io/NerdShelf/",
+      "icon": "/icons/nerdshelf.png"
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+---
+// Cover of a project: its artwork, or its icon on an accent glow, or a monogram.
+import { alpha } from '../lib/site.js'
+const { project, class: cls = '', big = false, eager = false } = Astro.props
+const a = project.accent || '#8f82ff'
+const initials = project.name.split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase()
+const bg = `radial-gradient(120% 90% at 85% 10%, ${alpha(a, 0.55)} 0%, transparent 55%), radial-gradient(90% 80% at 0% 100%, ${alpha(a, 0.35)} 0%, transparent 60%), linear-gradient(135deg, #191c27 0%, #0e1016 100%)`
+---
+<div class:list={['relative overflow-hidden', cls]} style={`background:${bg}`}>
+  {project.art ? (
+    <img src={project.art} alt={`${project.name}`} loading={eager ? 'eager' : 'lazy'} decoding="async" class="absolute inset-0 h-full w-full object-cover" />
+  ) : project.icon ? (
+    <div class="absolute inset-0 grid place-items-center">
+      <img src={project.icon} alt={project.name} loading="lazy" class:list={['rounded-[22%] shadow-2xl', big ? 'h-40 w-40' : 'h-24 w-24']} style={`box-shadow: 0 30px 80px -20px ${alpha(a, 0.8)}`} />
+    </div>
+  ) : (
+    <div class:list={['absolute inset-0 grid place-items-center font-display font-bold text-white/10', big ? 'text-9xl' : 'text-6xl']}>{initials}</div>
+  )}
+  <slot />
+</div>

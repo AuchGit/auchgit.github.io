@@ -1,0 +1,13 @@
+---
+import Base from '../../layouts/Base.astro'
+import ProjectPage from '../../components/ProjectPage.astro'
+import { games } from '../../lib/site.js'
+
+export function getStaticPaths() {
+  return games.map(g => ({ params: { id: g.id }, props: { project: g } }))
+}
+const { project } = Astro.props
+---
+<Base title={project.name} description={project.tagline || project.description} image={project.art || undefined} accent={project.accent}>
+  <ProjectPage project={project} back={{ href: '/spiele/', label: 'Alle Spiele' }} />
+</Base>

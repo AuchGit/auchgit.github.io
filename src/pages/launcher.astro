@@ -1,0 +1,35 @@
+---
+import Base from '../layouts/Base.astro'
+import DownloadButton from '../components/DownloadButton.astro'
+import ReleaseList from '../components/ReleaseList.astro'
+import { launcher } from '../lib/site.js'
+---
+<Base title="AuchLauncher" description="Alle Spiele in einem Programm, Updates kommen von selbst." image="/img/launcher-library.jpg">
+  <section class="mx-auto max-w-7xl px-5 pt-16 text-center sm:px-8">
+    <img src="/logo.svg" alt="" class="reveal mx-auto h-20 w-20 drop-shadow-[0_20px_40px_rgba(109,93,252,0.6)]" />
+    <h1 class="reveal mt-6 font-display text-5xl font-bold tracking-tight sm:text-6xl"><span class="text-gradient">AuchLauncher</span></h1>
+    <p class="reveal mx-auto mt-4 max-w-xl text-lg text-ink-300">Alle Spiele in einem Programm, Updates kommen von selbst.</p>
+    <div class="reveal mt-8 flex justify-center">
+      <DownloadButton release={launcher.latest} label="Laden" />
+    </div>
+
+    <div class="reveal mx-auto mt-14 max-w-6xl overflow-hidden rounded-3xl ring-1 ring-white/10 shadow-[0_60px_140px_-40px_rgba(109,93,252,0.6)]" style="animation-delay:150ms">
+      <img src="/img/launcher-library.jpg" alt="Die Bibliothek im AuchLauncher" class="w-full" />
+    </div>
+  </section>
+
+  <section class="mx-auto max-w-3xl px-5 pt-16 sm:px-8">
+    <div class="card flex gap-4 p-5 text-sm leading-relaxed">
+      <span class="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full bg-amber-400/15 font-bold text-amber-300">!</span>
+      <p class="text-ink-300">
+        <span class="font-semibold text-white">Windows warnt beim ersten Start?</span>
+        Auf „Weitere Informationen“ und dann „Trotzdem ausführen“ klicken. Das kommt, weil das Programm kein gekauftes Zertifikat hat, und ist nur einmal nötig.
+      </p>
+    </div>
+  </section>
+
+  <section class="mx-auto max-w-3xl px-5 pt-20 sm:px-8">
+    <h2 class="font-display text-3xl font-semibold">Versionen</h2>
+    <div class="mt-8"><ReleaseList releases={launcher.releases} accent="#8f82ff" /></div>
+  </section>
+</Base>

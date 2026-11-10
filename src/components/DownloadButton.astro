@@ -1,0 +1,14 @@
+---
+import { bytes } from '../lib/site.js'
+const { release, label = 'Herunterladen', variant = 'brand', class: cls = '' } = Astro.props
+const dl = release?.download
+---
+{dl ? (
+  <a href={dl.url} class:list={['btn', variant === 'brand' ? 'btn-brand' : 'btn-soft', cls]} download>
+    <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></svg>
+    <span>{label}</span>
+    <span class="text-xs font-medium opacity-70">{release.version} · {bytes(dl.size)}</span>
+  </a>
+) : (
+  <span class:list={['btn btn-soft cursor-not-allowed opacity-60', cls]}>Bald verfügbar</span>
+)}

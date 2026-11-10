@@ -1,0 +1,6 @@
+node_modules
+dist
+.astro
+# generated at build time by scripts/fetch-data.mjs
+public/art/
+src/data/generated.json

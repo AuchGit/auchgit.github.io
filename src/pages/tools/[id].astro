@@ -1,0 +1,13 @@
+---
+import Base from '../../layouts/Base.astro'
+import ProjectPage from '../../components/ProjectPage.astro'
+import { tools } from '../../lib/site.js'
+
+export function getStaticPaths() {
+  return tools.map(t => ({ params: { id: t.id }, props: { project: t } }))
+}
+const { project } = Astro.props
+---
+<Base title={project.name} description={project.tagline || project.description} accent={project.accent}>
+  <ProjectPage project={project} back={{ href: '/tools/', label: 'Alle Tools' }} />
+</Base>

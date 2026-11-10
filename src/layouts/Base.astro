@@ -1,0 +1,43 @@
+---
+import '../styles/global.css'
+import Nav from '../components/Nav.astro'
+import Footer from '../components/Footer.astro'
+import { site } from '../lib/site.js'
+
+const { title, description = site.intro, image = '/art/dissonance.jpg', accent = '#8f82ff' } = Astro.props
+const fullTitle = title ? `${title} · ${site.brand}` : site.brand
+const canonical = new URL(Astro.url.pathname, Astro.site)
+const ogImage = new URL(image, Astro.site)
+---
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{fullTitle}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonical} />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="theme-color" content="#0b0c11" />
+    <!-- for friends: keep it out of search engines -->
+    <meta name="robots" content="noindex, nofollow" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content={site.brand} />
+    <meta property="og:title" content={fullTitle} />
+    <meta property="og:description" content={description} />
+    <meta property="og:image" content={ogImage} />
+    <meta name="twitter:card" content="summary_large_image" />
+  </head>
+  <body style={`--accent:${accent}`}>
+    <div aria-hidden="true" class="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
+      <div class="absolute -top-40 left-1/2 h-[42rem] w-[70rem] -translate-x-1/2 rounded-full opacity-30 blur-[120px]" style="background: radial-gradient(closest-side, #6d5dfc, transparent)"></div>
+      <div class="absolute -top-20 right-[-10rem] h-[30rem] w-[30rem] rounded-full opacity-20 blur-[120px]" style="background: radial-gradient(closest-side, #ff4f8b, transparent)"></div>
+      <div class="absolute inset-0 opacity-[0.05]" style="background-image: radial-gradient(#fff 1px, transparent 1px); background-size: 26px 26px; mask-image: linear-gradient(to bottom, black, transparent 70%)"></div>
+    </div>
+    <Nav />
+    <main>
+      <slot />
+    </main>
+    <Footer />
+  </body>
+</html>

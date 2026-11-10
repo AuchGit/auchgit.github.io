@@ -1,0 +1,24 @@
+---
+import { date, alpha } from '../lib/site.js'
+const { releases = [], accent = '#8f82ff', limit = 8, perVersion = 4 } = Astro.props
+const list = releases.slice(0, limit)
+---
+{list.length ? (
+  <ol class="relative ml-1.5 space-y-8 border-l border-white/[0.08]">
+    {list.map((r, i) => (
+      <li class="relative pl-7">
+        <span class="absolute -left-[7px] top-1.5 h-3.5 w-3.5 rounded-full ring-4 ring-ink-900" style={`background:${i === 0 ? accent : '#444a5f'}; box-shadow:${i === 0 ? `0 0 18px ${alpha(accent, 0.8)}` : 'none'}`}></span>
+        <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <span class="font-display text-lg font-semibold">Version {r.version}</span>
+          <time class="text-sm text-ink-400" datetime={r.date}>{date(r.date)}</time>
+          {i === 0 && <span class="chip h-6" style={`background:${alpha(accent, 0.18)}; color:${accent}`}>Aktuell</span>}
+        </div>
+        {r.notes.length ? (
+          <ul class="mt-2.5 space-y-1.5 text-[0.95rem] leading-relaxed text-ink-300">
+            {r.notes.slice(0, perVersion).map(n => <li class="flex gap-2.5"><span class="mt-[0.6em] h-1 w-1 shrink-0 rounded-full bg-ink-500"></span><span>{n}</span></li>)}
+          </ul>
+        ) : <p class="mt-2 text-sm text-ink-500">Keine Notizen.</p>}
+      </li>
+    ))}
+  </ol>
+) : <p class="text-ink-400">Noch keine Version veröffentlicht.</p>}

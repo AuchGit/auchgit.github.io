@@ -1,0 +1,13 @@
+---
+import Base from '../../layouts/Base.astro'
+import ProjectCard from '../../components/ProjectCard.astro'
+import { tools } from '../../lib/site.js'
+---
+<Base title="Tools" description="Werkzeuge für Windows und den Browser.">
+  <section class="mx-auto max-w-7xl px-5 pt-16 sm:px-8">
+    <h1 class="font-display text-4xl font-bold sm:text-5xl">Tools</h1>
+    <div class="mt-10 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+      {tools.map((t, i) => <ProjectCard project={t} index={i} />)}
+    </div>
+  </section>
+</Base>
