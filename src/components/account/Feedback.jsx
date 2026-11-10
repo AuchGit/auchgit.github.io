@@ -47,6 +47,16 @@ export default function Feedback() {
 
   if (session === undefined) return <div className="flex items-center gap-3 py-16 text-ink-300"><Spinner /> Einen Moment…</div>
 
+  if (!session) {
+    return (
+      <div className="card p-6 text-center sm:p-8">
+        <div className="font-display text-xl font-semibold">Kurz einloggen, dann geht's los</div>
+        <p className="mx-auto mt-2 max-w-sm text-ink-300">Feedback geht nur mit Account. Dafür kann ich dir dann auch antworten.</p>
+        <a href="/konto/" className="btn btn-brand mt-6">Einloggen oder Account erstellen</a>
+      </div>
+    )
+  }
+
   return (
     <form onSubmit={send} className="card space-y-5 p-6 sm:p-7">
       <div className="grid grid-cols-2 rounded-xl border border-white/[0.07] bg-white/[0.04] p-1">
@@ -71,7 +81,6 @@ export default function Feedback() {
           className="w-full resize-y rounded-xl border border-white/10 bg-white/[0.05] px-4 py-3 text-[15px] leading-relaxed text-white outline-none placeholder:text-ink-500 focus:border-brand-400" />
       </label>
 
-      {!session && <p className="text-sm text-ink-400">Tipp: <a href="/konto/" className="font-semibold text-brand-300 hover:text-white">Eingeloggt</a> kann ich dir auch antworten.</p>}
       {result && <Notice kind={result.kind}>{result.text}</Notice>}
 
       <button className="btn btn-brand w-full" disabled={busy}>{busy && <Spinner />} Abschicken</button>

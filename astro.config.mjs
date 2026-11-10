@@ -5,7 +5,9 @@ import tailwindcss from '@tailwindcss/vite'
 export default defineConfig({
   site: 'https://auchgit.github.io',
   trailingSlash: 'ignore',
-  build: { format: 'directory' },
+  // Styles inside every page: after a deploy, a cached page can't point to a
+  // stylesheet that no longer exists (that left pages unstyled).
+  build: { format: 'directory', inlineStylesheets: 'always' },
   integrations: [react()],
   vite: { plugins: [tailwindcss()] },
 })
