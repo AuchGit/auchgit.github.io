@@ -5,6 +5,7 @@ import FriendCode from './FriendCode.jsx'
 import Friends from './Friends.jsx'
 import { Avatar, Card, Field, Notice, Spinner } from './ui.jsx'
 import WhyAccount from './WhyAccount.jsx'
+import { AvatarUpload, ProfileDetails } from './ProfileEditor.jsx'
 
 function NameEditor({ userId, name, onSaved }) {
   const [editing, setEditing] = useState(false)
@@ -117,7 +118,7 @@ export default function Account() {
       <Card className="relative overflow-hidden">
         <div className="pointer-events-none absolute -left-24 -top-24 h-72 w-72 rounded-full opacity-25 blur-3xl" style={{ background: 'radial-gradient(closest-side,#6d5dfc,transparent)' }} />
         <div className="relative flex flex-col gap-6 sm:flex-row sm:items-center">
-          <Avatar id={session.user.id} name={name || session.user.email} size={88} />
+          <AvatarUpload userId={session.user.id} name={name || session.user.email} url={profile?.avatar_url} onSaved={reloadProfile} />
           <div className="min-w-0 flex-1">
             <NameEditor userId={session.user.id} name={name} onSaved={reloadProfile} />
             <div className="mt-1 truncate text-sm text-ink-400">{session.user.email}</div>
@@ -132,6 +133,8 @@ export default function Account() {
       {profile?.friend_code
         ? <FriendCode code={profile.friend_code} />
         : profile && <Notice>Dein Freundescode wird gerade noch eingerichtet, gleich taucht er hier auf.</Notice>}
+
+      {profile?.social && <ProfileDetails userId={session.user.id} about={profile.about} links={profile.links} onSaved={reloadProfile} />}
 
       <Card>
         <h2 className="mb-5 font-display text-xl font-semibold">Deine Leute</h2>

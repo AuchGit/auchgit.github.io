@@ -32,7 +32,7 @@ function errorText(err) {
 function Row({ person, children, sub }) {
   return (
     <li className="flex items-center gap-3 py-3">
-      <Avatar id={person.user_id} name={person.player_name} size={40} />
+      <Avatar id={person.user_id} name={person.player_name} url={person.avatar_url} size={40} />
       <div className="min-w-0 flex-1">
         <div className="truncate font-semibold text-white">{person.player_name}</div>
         {sub && <div className="truncate text-xs text-ink-400">{sub}</div>}
@@ -115,8 +115,8 @@ export default function Friends({ me }) {
       {error && <Notice kind="error">{error}</Notice>}
 
       {/* add */}
-      <div className="grid gap-4 md:grid-cols-2">
-        <form onSubmit={addByCode} className="card p-5">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <form onSubmit={addByCode} className="card min-w-0 p-5">
           <div className="font-semibold">Mit Code adden</div>
           <div className="mt-3 flex gap-2">
             <input

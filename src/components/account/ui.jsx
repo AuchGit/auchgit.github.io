@@ -1,7 +1,10 @@
 import { initials, personColor } from '../../lib/supabase.js'
 
-export function Avatar({ id, name, size = 40 }) {
+export function Avatar({ id, name, size = 40, url }) {
   const c = personColor(id)
+  if (url) {
+    return <img src={url} alt="" width={size} height={size} loading="lazy" className="shrink-0 rounded-full object-cover" style={{ width: size, height: size, boxShadow: `0 8px 24px -10px ${c}` }} />
+  }
   return (
     <div
       className="grid shrink-0 place-items-center rounded-full font-display font-bold text-white"
