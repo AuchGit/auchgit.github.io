@@ -1,0 +1,9 @@
+---
+import Base from '../layouts/Base.astro'
+import ChatApp from '../components/chat/ChatApp.jsx'
+---
+<Base title="Chat">
+  <section class="mx-auto max-w-6xl px-3 pt-4 sm:px-6">
+    <ChatApp client:only="react" />
+  </section>
+</Base>

@@ -3,6 +3,7 @@
 @import '@fontsource-variable/space-grotesk';
 
 @theme {
+  --shadow-lift: 0 24px 60px -18px rgb(0 0 0 / 0.75);
   --font-sans: 'Inter Variable', Inter, system-ui, 'Segoe UI', sans-serif;
   --font-display: 'Space Grotesk Variable', 'Inter Variable', system-ui, sans-serif;
 
@@ -53,7 +54,7 @@ body {
   background: rgb(109 93 252 / 0.45);
 }
 
-:focus-visible {
+:focus-visible:not(input, textarea, select) {
   outline: 2px solid var(--color-brand-400);
   outline-offset: 3px;
   border-radius: 6px;
@@ -86,6 +87,24 @@ body {
   background: rgb(255 255 255 / 0.07);
   border: 1px solid rgb(255 255 255 / 0.09);
   &:hover { background: rgb(255 255 255 / 0.12); }
+}
+
+@utility btn-ghost {
+  color: var(--color-ink-200);
+  &:hover { color: white; background: rgb(255 255 255 / 0.07); }
+}
+
+@utility icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 0.75rem;
+  color: var(--color-ink-200);
+  background: rgb(255 255 255 / 0.06);
+  border: 1px solid rgb(255 255 255 / 0.06);
+  &:hover { color: white; background: rgb(255 255 255 / 0.12); }
 }
 
 @utility card {
