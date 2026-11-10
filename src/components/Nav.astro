@@ -1,5 +1,6 @@
 ---
 import { site, launcher, bytes } from '../lib/site.js'
+import AuthStatus from './account/AuthStatus.jsx'
 const path = Astro.url.pathname
 const links = [
   { href: '/spiele/', label: 'Spiele' },
@@ -29,6 +30,7 @@ const dl = launcher.latest?.download
       ))}
     </ul>
     <div class="flex-1"></div>
+    <AuthStatus client:only="react" />
     {dl && (
       <a href={dl.url} class="btn btn-brand hidden h-10 px-4 text-sm sm:inline-flex" title={`${launcher.name} ${launcher.latest.version} · ${bytes(dl.size)}`}>
         <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></svg>

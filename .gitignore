@@ -5,3 +5,6 @@ dist
 public/art/
 public/api/
 src/data/generated.json
+
+# local Supabase settings (public values, set as Actions secrets for CI)
+.env

@@ -1,0 +1,9 @@
+---
+import Base from '../layouts/Base.astro'
+import Account from '../components/account/Account.jsx'
+---
+<Base title="Account">
+  <section class="mx-auto max-w-4xl px-5 pt-14 sm:px-8">
+    <Account client:only="react" />
+  </section>
+</Base>

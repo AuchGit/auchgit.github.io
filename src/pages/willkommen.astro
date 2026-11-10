@@ -1,0 +1,13 @@
+---
+import Base from '../layouts/Base.astro'
+import Welcome from '../components/account/Welcome.jsx'
+import { launcher, bytes } from '../lib/site.js'
+
+const dl = launcher.latest?.download
+const info = dl ? { url: dl.url, version: launcher.latest.version, size: bytes(dl.size) } : null
+---
+<Base title="Willkommen">
+  <section class="mx-auto max-w-4xl px-5 pt-16 sm:px-8">
+    <Welcome client:only="react" launcher={info} />
+  </section>
+</Base>
