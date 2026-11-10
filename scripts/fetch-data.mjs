@@ -127,15 +127,20 @@ async function main() {
     for (const r of [...legacy, ...own]) byVersion.set(r.version, r)
     const releases = [...byVersion.values()].sort((a, b) => cmp(b.version, a.version))
 
-    // Update feed: the newest release's latest.json, served from our own domain.
+    // Update feed: latest.json of the newest release that has one, served from
+    // our own domain. A release still uploading its files is skipped, so the
+    // feed never goes missing or backwards.
     const newest = releases[0]
     if (newest) {
       let feedJson = null
-      try {
-        if (newest.feed) feedJson = await get(newest.feed)
-        else if (newest.source === 'legacy') feedJson = await get(`https://github.com/${entry.repo}/releases/latest/download/latest.json`)
-      } catch (e) {
-        console.warn(`[data] ${entry.id}: latest.json nicht lesbar (${e.message})`)
+      for (const r of releases) {
+        try {
+          if (r.feed) feedJson = await get(r.feed)
+          else if (r.source === 'legacy' && r === newest) feedJson = await get(`https://github.com/${entry.repo}/releases/latest/download/latest.json`)
+        } catch (e) {
+          console.warn(`[data] ${entry.id} ${r.version}: latest.json nicht lesbar (${e.message})`)
+        }
+        if (feedJson) break
       }
       if (feedJson) writeJson(`api/${entry.id}/latest.json`, feedJson)
       writeJson(`api/${entry.id}/releases.json`, {

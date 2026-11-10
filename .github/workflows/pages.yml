@@ -1,14 +1,21 @@
 # Builds the website and publishes it on GitHub Pages.
 #
 # This repo is also the public download channel: every installer is a release
-# here. A new release rebuilds the site right away, so its update feed
-# (/api/<id>/latest.json) is live within a minute or two. Also on every push,
-# hourly as a safety net, and on demand.
+# here. The release workflows of the code repos send a `repository_dispatch`
+# ("release") once all files are uploaded, so the update feed
+# (/api/<id>/latest.json) is live a minute or two after a release.
+#
+# Deployments must come from main: Pages accepts a deployment from a release
+# tag but keeps serving the old site. A plain release event is therefore only
+# forwarded as a build on main. Also on every push, hourly as a safety net, and
+# on demand.
 name: Website
 
 on:
   push:
     branches: [main]
+  repository_dispatch:
+    types: [release]
   release:
     types: [published, edited, deleted]
   schedule:
@@ -21,14 +28,28 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
+  group: pages-${{ github.event_name == 'release' && 'forward' || 'build' }}
   cancel-in-progress: true
 
 jobs:
+  # A release made in this repo: rebuild from main instead of the tag.
+  forward:
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - run: gh workflow run pages.yml --ref main -R "$GITHUB_REPOSITORY"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
   build:
+    if: github.event_name != 'release'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
