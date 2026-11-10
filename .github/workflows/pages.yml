@@ -61,6 +61,8 @@ jobs:
           PUBLIC_SUPABASE_URL: ${{ secrets.PUBLIC_SUPABASE_URL }}
           PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.PUBLIC_SUPABASE_ANON_KEY }}
         run: npm run build
+      - name: Keep the previous version's scripts (cached pages keep working)
+        run: node scripts/keep-old-assets.mjs
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

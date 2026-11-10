@@ -27,6 +27,28 @@ const ogImage = new URL(image, Astro.site)
     <meta property="og:description" content={description} />
     <meta property="og:image" content={ogImage} />
     <meta name="twitter:card" content="summary_large_image" />
+    <script is:inline>
+      // A page cached from before an update may ask for scripts that are gone,
+      // leaving its interactive parts empty. Reload once, fresh, in that case.
+      (function () {
+        function reloadOnce() {
+          try {
+            var last = +sessionStorage.getItem('auch.reloaded') || 0
+            if (Date.now() - last < 30000) return
+            sessionStorage.setItem('auch.reloaded', String(Date.now()))
+          } catch (e) {}
+          location.reload()
+        }
+        window.addEventListener('unhandledrejection', function (e) {
+          var m = String((e.reason && e.reason.message) || e.reason || '')
+          if (/dynamically imported module|Importing a module script failed|error loading dynamically imported/i.test(m)) reloadOnce()
+        })
+        window.addEventListener('error', function (e) {
+          var t = e.target
+          if (t && t.tagName === 'SCRIPT' && /\/_astro\//.test(t.src || '')) reloadOnce()
+        }, true)
+      })()
+    </script>
   </head>
   <body style={`--accent:${accent}`}>
     <div aria-hidden="true" class="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
