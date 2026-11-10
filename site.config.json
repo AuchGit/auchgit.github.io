@@ -1,9 +1,9 @@
 {
   "brand": "AuchGit",
   "url": "https://auchgit.github.io",
+  "dist": "AuchGit/auchgit.github.io",
   "claim": "Hier landet alles, was ich baue.",
   "intro": "Spiele, Tools und was sonst noch so entsteht. Mit dem Launcher hast du alles auf einmal, und Updates kommen von selbst.",
-  "catalog": "https://raw.githubusercontent.com/AuchGit/AuchLauncher/main/public/catalog/games.json",
   "launcher": {
     "repo": "AuchGit/AuchLauncher",
     "name": "AuchLauncher"

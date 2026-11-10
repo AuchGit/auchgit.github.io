@@ -1,12 +1,16 @@
 # Builds the website and publishes it on GitHub Pages.
 #
-# Runs on every push, every hour (so new releases of the games and tools show
-# up without anyone touching this repo) and on demand.
+# This repo is also the public download channel: every installer is a release
+# here. A new release rebuilds the site right away, so its update feed
+# (/api/<id>/latest.json) is live within a minute or two. Also on every push,
+# hourly as a safety net, and on demand.
 name: Website
 
 on:
   push:
     branches: [main]
+  release:
+    types: [published, edited, deleted]
   schedule:
     - cron: '17 * * * *'
   workflow_dispatch:

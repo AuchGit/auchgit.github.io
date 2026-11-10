@@ -3,4 +3,5 @@ dist
 .astro
 # generated at build time by scripts/fetch-data.mjs
 public/art/
+public/api/
 src/data/generated.json

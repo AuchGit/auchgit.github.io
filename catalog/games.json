@@ -1,0 +1,58 @@
+{
+  "schema": 1,
+  "owner": "AuchGit",
+  "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDYwRTQ4RkU4MDU1OTlBREMKUldUY21sa0Y2SS9rWUlzOVF3L1lIdWRsUkNPVzQyVGdnVjdXa0U0VXI5QlNsNjhOQUZ1bmpQSGwK",
+  "games": [
+    {
+      "id": "stop-resisting",
+      "name": "Stop Resisting",
+      "tagline": "A Totally Fair Traffic Stop Simulator",
+      "description": "Eine Pixel-Art-Satire über Verkehrskontrollen. Fahrer anhalten, Papiere prüfen, Autos durchsuchen und mit den Folgen deiner Entscheidungen leben.",
+      "genres": [
+        "Satire",
+        "Pixel-Art",
+        "Simulation"
+      ],
+      "accent": "#ff5a5f",
+      "art": "art/stop-resisting.jpg",
+      "repo": "AuchGit/StopResisting",
+      "productName": "Stop Resisting",
+      "exe": "stop-resisting.exe",
+      "order": 1
+    },
+    {
+      "id": "cardgame",
+      "name": "Cardgame",
+      "tagline": "Roguelite-Deckbuilder mit fünf Klassen",
+      "description": "Roguelite-Deckbuilder: Klasse wählen, Deck aufbauen und dich über zufällig erzeugte Karten bis zum Boss kämpfen. Jeder Run spielt sich anders.",
+      "genres": [
+        "Deckbuilder",
+        "Roguelite",
+        "Strategie"
+      ],
+      "accent": "#f2a541",
+      "art": "art/cardgame.jpg",
+      "repo": "AuchGit/Cardgame",
+      "productName": "Cardgame",
+      "exe": "cardgame.exe",
+      "order": 2
+    },
+    {
+      "id": "dissonance",
+      "name": "Dissonance",
+      "tagline": "Taktik-RPG in einer zersplitterten Welt",
+      "description": "Taktik-RPG mit Karten. Erstelle deinen Helden, erkunde eine zersplitterte Welt und kämpfe rundenbasiert auf einem isometrischen Hex-Feld. Aktuell als spielbare Demo.",
+      "genres": [
+        "Taktik-RPG",
+        "Karten",
+        "Demo"
+      ],
+      "accent": "#9d7cff",
+      "art": "art/dissonance.jpg",
+      "repo": "AuchGit/Dissonance",
+      "productName": "Dissonance Demo",
+      "exe": "dissonance.exe",
+      "order": 3
+    }
+  ]
+}
