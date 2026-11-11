@@ -4,7 +4,7 @@ import { useSocial } from './useSocial'
 import { useLauncher } from './shim'
 import { api } from './shim'
 import { PersonAvatar, ago } from './Person'
-import { AttachButton, EmojiButton, InviteButton, InviteCard, LinkPreview, MediaMessage, emojiOnly, onlyImage } from './Extras'
+import { AttachButton, EmojiButton, GifButton, InviteButton, InviteCard, LinkPreview, MediaMessage, emojiOnly, onlyImage } from './Extras'
 
 const URL_RE = /(https?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]])/gi
 const GROUP_GAP = 5 * 60 * 1000
@@ -276,6 +276,7 @@ export default function ChatPanel() {
             onPaste={e => { const f = [...(e.clipboardData?.files || [])][0]; if (f && /^(image|video)\//.test(f.type)) { e.preventDefault(); upload(f) } }}
             placeholder={group ? `Nachricht an ${chat.title}` : `Nachricht an ${friend.player_name}`}
             className="max-h-[132px] min-h-[28px] flex-1 resize-none bg-transparent px-1.5 py-1 text-[13px] leading-snug text-white outline-none focus-visible:outline-none placeholder:text-ink-500" />
+          <GifButton onPick={url => { setError(null); stick.current = true; send(url).catch(e => setError(e.message)) }} />
           <EmojiButton onPick={insert} />
           <button onClick={submit} disabled={!text.trim() || sending} title="Senden (Enter)"
             className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-brand-500 text-white transition hover:brightness-110 disabled:bg-white/[0.06] disabled:text-ink-500">

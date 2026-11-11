@@ -170,6 +170,7 @@ export function InviteCard({ m, mine, who }) {
   const art = p.art || artUrl(game)
   function join() {
     const l = useLauncher.getState()
+    if (l.joinElsewhere) { l.joinElsewhere(p.game); return }
     if (typeof l.play !== 'function') { window.open(`/spiele/${p.game}/`, '_self'); return }
     if (installed) l.play(p.game)
     else l.openModal({ type: 'install', id: p.game })
@@ -242,5 +243,78 @@ export function AttachButton({ onFile, busy }) {
       <input ref={input} type="file" accept="image/*,video/mp4,video/webm" hidden
         onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) onFile(f) }} />
     </>
+  )
+}
+
+// ------------------------------------------------------------------ GIF search (GIPHY)
+// The key is a public client key (VITE_ in the launcher, PUBLIC_ on the website).
+// Without one the button simply doesn't show.
+const GIPHY_KEY = import.meta.env.VITE_GIPHY_KEY || import.meta.env.PUBLIC_GIPHY_KEY || ''
+
+async function giphy(q) {
+  const base = 'https://api.giphy.com/v1/gifs/'
+  const params = new URLSearchParams({ api_key: GIPHY_KEY, limit: '24', rating: 'pg-13', bundle: 'messaging_non_clips' })
+  if (q) { params.set('q', q); params.set('lang', 'de') }
+  const r = await fetch(`${base}${q ? 'search' : 'trending'}?${params}`)
+  if (!r.ok) throw new Error('GIF-Suche gerade nicht erreichbar.')
+  const { data } = await r.json()
+  return (data || []).map(g => ({
+    id: g.id,
+    preview: g.images?.fixed_width_small?.url || g.images?.fixed_width?.url,
+    url: g.images?.downsized_medium?.url || g.images?.original?.url,
+    w: Number(g.images?.fixed_width_small?.width) || 100,
+    h: Number(g.images?.fixed_width_small?.height) || 100,
+  })).filter(g => g.preview && g.url)
+}
+
+export function GifButton({ onPick }) {
+  const [open, setOpen] = useState(false)
+  const [q, setQ] = useState('')
+  const [items, setItems] = useState(null)
+  const [error, setError] = useState(null)
+  const box = useRef(null)
+  const timer = useRef(null)
+  useEffect(() => {
+    if (!open) return
+    const off = e => { if (!box.current?.contains(e.target)) setOpen(false) }
+    window.addEventListener('mousedown', off)
+    return () => window.removeEventListener('mousedown', off)
+  }, [open])
+  useEffect(() => {
+    if (!open) return
+    clearTimeout(timer.current)
+    timer.current = setTimeout(() => {
+      giphy(q.trim()).then(r => { setItems(r); setError(null) }).catch(e => setError(e.message))
+    }, q ? 350 : 0)
+    return () => clearTimeout(timer.current)
+  }, [open, q])
+  if (!GIPHY_KEY) return null
+  return (
+    <div ref={box} className="relative">
+      <button type="button" onClick={() => setOpen(o => !o)} title="GIF"
+        className={`grid h-8 w-8 place-items-center rounded-lg text-[10.5px] font-bold tracking-wide transition ${open ? 'bg-white/[0.1] text-white' : 'text-ink-400 hover:bg-white/[0.07] hover:text-white'}`}>
+        GIF
+      </button>
+      {open && (
+        <div className="card absolute bottom-full right-0 z-40 mb-2 flex w-[310px] flex-col bg-ink-800/95 p-2 shadow-lift">
+          <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="GIFs suchen"
+            className="mb-2 h-9 w-full rounded-lg border border-white/10 bg-white/[0.05] px-3 text-[13px] text-white outline-none focus-visible:outline-none placeholder:text-ink-500 focus:border-brand-400" />
+          <div className="h-64 overflow-y-auto">
+            {error && <p className="p-2 text-[12px] text-rose-200">{error}</p>}
+            {!items && !error && <div className="grid h-full place-items-center text-ink-500"><Loader2 size={16} className="animate-spin" /></div>}
+            {items?.length === 0 && <p className="p-2 text-[12px] text-ink-400">Nix gefunden.</p>}
+            <div className="columns-2 gap-1.5">
+              {items?.map(g => (
+                <button key={g.id} type="button" onClick={() => { setOpen(false); setQ(''); onPick(g.url) }}
+                  className="mb-1.5 block w-full overflow-hidden rounded-lg bg-white/[0.04] hover:ring-2 hover:ring-brand-400">
+                  <img src={g.preview} alt="" loading="lazy" className="w-full" style={{ aspectRatio: `${g.w} / ${g.h}` }} />
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="mt-1.5 text-right text-[9.5px] font-semibold uppercase tracking-[0.14em] text-ink-500">Powered by GIPHY</div>
+        </div>
+      )}
+    </div>
   )
 }

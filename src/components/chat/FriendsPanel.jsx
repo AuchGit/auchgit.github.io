@@ -37,7 +37,7 @@ function Menu({ onClose }) {
   )
 }
 
-export default function FriendsPanel() {
+export default function FriendsPanel({ onCollapse }) {
   const me = useSocial(s => s.me)
   const friends = useSocial(s => s.friends)
   const online = useSocial(s => s.online)

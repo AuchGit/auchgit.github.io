@@ -114,7 +114,7 @@ export const useSocial = create((set, get) => ({
     presence
       .on('presence', { event: 'sync' }, () => {
         const online = {}
-        for (const [id, metas] of Object.entries(presence.presenceState())) online[id] = metas[metas.length - 1] || {}
+        for (const [id, metas] of Object.entries(presence.presenceState())) online[id] = metas.find(m => m.game) || metas[metas.length - 1] || {}
         set({ online })
       })
       .subscribe(status => { if (status === 'SUBSCRIBED') get()._track() })

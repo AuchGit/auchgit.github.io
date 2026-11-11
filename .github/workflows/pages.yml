@@ -60,6 +60,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PUBLIC_SUPABASE_URL: ${{ secrets.PUBLIC_SUPABASE_URL }}
           PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.PUBLIC_SUPABASE_ANON_KEY }}
+          PUBLIC_GIPHY_KEY: ${{ secrets.PUBLIC_GIPHY_KEY }}
         run: npm run build
       - name: Keep the previous version's scripts (cached pages keep working)
         run: node scripts/keep-old-assets.mjs
