@@ -1,6 +1,6 @@
 // Chat extras: emoji picker, previews for image / GIF / YouTube links, game invites.
 import { useEffect, useRef, useState } from 'react'
-import { Gamepad2, Play, Smile } from 'lucide-react'
+import { Gamepad2, ImagePlus, Loader2, Play, Smile } from 'lucide-react'
 import { gameState, useLauncher } from './shim'
 import { useSocial } from './useSocial'
 import { api } from './shim'
@@ -192,5 +192,55 @@ export function InviteCard({ m, mine, who }) {
         </div>
       )}
     </div>
+  )
+}
+
+// ------------------------------------------------------------------ pictures + videos
+/** A picture or video someone uploaded; loads through a short-lived members-only link. */
+export function MediaMessage({ m }) {
+  const p = m.payload || {}
+  const [url, setUrl] = useState(null)
+  const [failed, setFailed] = useState(false)
+  const [big, setBig] = useState(false)
+  useEffect(() => {
+    let alive = true
+    useSocial.getState().mediaUrl(p.path).then(u => { if (alive) (u ? setUrl(u) : setFailed(true)) })
+    return () => { alive = false }
+  }, [p.path])
+  // Reserve the space up front so the chat doesn't jump while it loads.
+  const ratio = p.w && p.h ? p.w / p.h : 4 / 3
+  const width = Math.min(260, Math.round(220 * Math.max(0.6, Math.min(ratio, 1.6))))
+  const box = { width, aspectRatio: String(ratio) }
+  if (failed) return <div className="rounded-2xl bg-white/[0.05] px-3 py-2 text-[12px] text-ink-400">{p.type === 'video' ? 'Video' : 'Bild'} nicht mehr verfügbar</div>
+  if (!url) return <div className="animate-pulse rounded-2xl bg-white/[0.06]" style={box} />
+  if (p.type === 'video') {
+    return <video src={url} controls preload="metadata" className="rounded-2xl bg-black" style={{ ...box, maxWidth: '100%' }} />
+  }
+  return (
+    <>
+      <button type="button" onClick={() => setBig(true)} className="block overflow-hidden rounded-2xl bg-white/[0.04]" style={{ ...box, maxWidth: '100%' }}>
+        <img src={url} alt="" className="h-full w-full object-cover" onError={() => setFailed(true)} />
+      </button>
+      {big && (
+        <div className="fixed inset-0 z-[60] grid cursor-zoom-out place-items-center bg-black/90 p-6" onClick={() => setBig(false)}>
+          <img src={url} alt="" className="max-h-full max-w-full rounded-lg object-contain" />
+        </div>
+      )}
+    </>
+  )
+}
+
+/** Paper clip next to the message field: pick a picture or video. */
+export function AttachButton({ onFile, busy }) {
+  const input = useRef(null)
+  return (
+    <>
+      <button type="button" onClick={() => input.current?.click()} disabled={busy} title="Bild oder Video schicken"
+        className="grid h-8 w-8 place-items-center rounded-lg text-ink-400 transition hover:bg-white/[0.07] hover:text-white disabled:opacity-50">
+        {busy ? <Loader2 size={16} className="animate-spin" /> : <ImagePlus size={17} />}
+      </button>
+      <input ref={input} type="file" accept="image/*,video/mp4,video/webm" hidden
+        onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) onFile(f) }} />
+    </>
   )
 }

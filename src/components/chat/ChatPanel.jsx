@@ -4,7 +4,7 @@ import { useSocial } from './useSocial'
 import { useLauncher } from './shim'
 import { api } from './shim'
 import { PersonAvatar, ago } from './Person'
-import { EmojiButton, InviteButton, InviteCard, LinkPreview, emojiOnly, onlyImage } from './Extras'
+import { AttachButton, EmojiButton, InviteButton, InviteCard, LinkPreview, MediaMessage, emojiOnly, onlyImage } from './Extras'
 
 const URL_RE = /(https?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]])/gi
 const GROUP_GAP = 5 * 60 * 1000
@@ -60,6 +60,7 @@ export default function ChatPanel() {
   const friends = useSocial(s => s.friends)
   const uid = useSocial(s => s.session?.user?.id)
   const sending = useSocial(s => s.sending)
+  const uploading = useSocial(s => s.uploading)
   const typingMap = useSocial(s => (s.chat ? s.typing[s.chat.convId] : null))
   const reads = useSocial(s => (s.chat ? s.reads[s.chat.convId] : null))
   const [, tick] = useState(0)
@@ -111,6 +112,12 @@ export default function ChatPanel() {
     try { await send(body) } catch (e) { setError(e.message); setText(body) }
   }
 
+  async function upload(file) {
+    setError(null)
+    stick.current = true
+    try { await useSocial.getState().sendMedia(file) } catch (e) { setError(e.message) }
+  }
+
   function insert(emoji) {
     const el = input.current
     const start = el?.selectionStart ?? text.length
@@ -137,7 +144,9 @@ export default function ChatPanel() {
     : online ? (online.game ? <>spielt <span className="text-brand-300">{online.game}</span></> : 'Online') : ago(friend.last_seen)
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col"
+      onDragOver={e => { if ([...(e.dataTransfer?.types || [])].includes('Files')) e.preventDefault() }}
+      onDrop={e => { const f = e.dataTransfer?.files?.[0]; if (f) { e.preventDefault(); upload(f) } }}>
       <div className="relative flex items-center gap-2 border-b border-white/[0.06] px-4 py-3">
         {group ? (
           <>
@@ -220,6 +229,7 @@ export default function ChatPanel() {
                       : <span className="w-6 shrink-0" />)}
                     <div title={time(m.created_at)} className={`flex max-w-[78%] flex-col ${mine ? 'items-end' : 'items-start'}`}>
                       {m.kind === 'invite' ? <InviteCard m={m} mine={mine} who={who?.player_name} />
+                        : m.kind === 'media' ? <MediaMessage m={m} />
                         : emojiOnly(m.body) ? <div className={`leading-tight ${emojiOnly(m.body) === 1 ? 'text-[44px]' : 'text-[34px]'}`}>{m.body}</div>
                         : onlyImage(m.body) ? <LinkPreview body={m.body} />
                         : (
@@ -259,9 +269,11 @@ export default function ChatPanel() {
         {error && <div className="mb-2 rounded-lg bg-rose-500/10 px-3 py-1.5 text-[12px] text-rose-200">{error}</div>}
         <div className="flex items-end gap-1 rounded-xl border border-white/10 bg-white/[0.05] py-1.5 pl-1.5 pr-1.5 focus-within:border-brand-400">
           <InviteButton onError={setError} />
+          <AttachButton onFile={upload} busy={uploading} />
           <textarea ref={input} rows={1} value={text} maxLength={2000}
             onChange={e => { setText(e.target.value); if (e.target.value.trim()) useSocial.getState().typingPing() }}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit() } }}
+            onPaste={e => { const f = [...(e.clipboardData?.files || [])][0]; if (f && /^(image|video)\//.test(f.type)) { e.preventDefault(); upload(f) } }}
             placeholder={group ? `Nachricht an ${chat.title}` : `Nachricht an ${friend.player_name}`}
             className="max-h-[132px] min-h-[28px] flex-1 resize-none bg-transparent px-1.5 py-1 text-[13px] leading-snug text-white outline-none focus-visible:outline-none placeholder:text-ink-500" />
           <EmojiButton onPick={insert} />

@@ -34,6 +34,33 @@ let inited = false
 let convChannel = null // the open chat: typing and read receipts (broadcast, nothing stored)
 let lastTypingPing = 0
 const TYPING_MS = 4000
+const VIDEO_MAX = 15 * 1024 * 1024
+const GIF_MAX = 8 * 1024 * 1024
+const signed = new Map() // storage path -> { url, until }
+
+/** Pictures get smaller before upload: max 1600 px, WebP. GIFs and videos stay as they are. */
+async function shrink(file, max = 1600) {
+  const bmp = await createImageBitmap(file)
+  const scale = Math.min(1, max / Math.max(bmp.width, bmp.height))
+  const w = Math.round(bmp.width * scale), h = Math.round(bmp.height * scale)
+  const canvas = document.createElement('canvas')
+  canvas.width = w; canvas.height = h
+  canvas.getContext('2d').drawImage(bmp, 0, 0, w, h)
+  bmp.close?.()
+  const blob = await new Promise(r => canvas.toBlob(r, 'image/webp', 0.82))
+  return { blob: blob || file, w, h }
+}
+
+function videoSize(file) {
+  return new Promise(resolve => {
+    const v = document.createElement('video')
+    const url = URL.createObjectURL(file)
+    v.preload = 'metadata'
+    v.onloadedmetadata = () => { resolve({ w: v.videoWidth, h: v.videoHeight }); URL.revokeObjectURL(url) }
+    v.onerror = () => { resolve({ w: 0, h: 0 }); URL.revokeObjectURL(url) }
+    v.src = url
+  })
+}
 
 const backgrounded = () => typeof document !== 'undefined' && document.visibilityState === 'hidden'
 
@@ -48,6 +75,7 @@ export const useSocial = create((set, get) => ({
   chat: null,
   messages: {},
   sending: false,
+  uploading: false,
   game: null,
   typing: {}, // convId -> { userId: { name, at } }
   reads: {},  // convId -> { userId: last read timestamp }
@@ -282,6 +310,51 @@ export const useSocial = create((set, get) => ({
   typingIn(convId) {
     const t = get().typing[convId] || {}
     return Object.values(t).filter(x => Date.now() - x.at < TYPING_MS).map(x => x.name)
+  },
+
+  /** Upload a picture or video into the open chat and post it. */
+  async sendMedia(file) {
+    const chat = get().chat
+    if (!chat || !file) return
+    const uid = get().session.user.id
+    let blob = file, w = 0, h = 0, type = 'image'
+    if (/^video\/(mp4|webm)$/.test(file.type)) {
+      if (file.size > VIDEO_MAX) throw new Error('Videos gehen bis 15 MB. Für längere einfach einen Link schicken.')
+      type = 'video'
+      ;({ w, h } = await videoSize(file))
+    } else if (file.type === 'image/gif') {
+      if (file.size > GIF_MAX) throw new Error('GIFs gehen bis 8 MB.')
+      const bmp = await createImageBitmap(file).catch(() => null)
+      if (bmp) { w = bmp.width; h = bmp.height; bmp.close?.() }
+    } else if (/^image\//.test(file.type)) {
+      ;({ blob, w, h } = await shrink(file))
+    } else {
+      throw new Error('Geht nur mit Bildern und Videos (MP4, WebM).')
+    }
+    const ext = { 'image/webp': 'webp', 'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif', 'video/mp4': 'mp4', 'video/webm': 'webm' }[blob.type] || 'bin'
+    const path = `${chat.convId}/${uid}/${Date.now()}.${ext}`
+    set({ uploading: true })
+    try {
+      const { error } = await supabase.storage.from('chat').upload(path, blob, { contentType: blob.type, upsert: false })
+      if (error) {
+        throw new Error(/bucket not found|row-level|policy|unauthorized|403|404/i.test(error.message || '')
+          ? 'Bilder im Chat sind noch nicht freigeschaltet.'
+          : germanError(error))
+      }
+      await get().send(type === 'video' ? 'Video' : 'Bild', { kind: 'media', payload: { path, type, w, h, size: blob.size } })
+    } finally {
+      set({ uploading: false })
+    }
+  },
+
+  /** Short-lived link to a chat file (members only, so no public URL). */
+  async mediaUrl(path) {
+    const hit = signed.get(path)
+    if (hit && hit.until > Date.now()) return hit.url
+    const { data, error } = await supabase.storage.from('chat').createSignedUrl(path, 3600)
+    if (error || !data?.signedUrl) return null
+    signed.set(path, { url: data.signedUrl, until: Date.now() + 50 * 60 * 1000 })
+    return data.signedUrl
   },
 
   /** Invite the chat to play a game together. */
