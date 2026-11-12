@@ -309,10 +309,13 @@ export function AttachButton({ onFile, busy }) {
   )
 }
 
-// ------------------------------------------------------------------ GIF search (GIPHY)
-// The key is a public client key (VITE_ in the launcher, PUBLIC_ on the website).
-// Without one the button simply doesn't show.
+// ------------------------------------------------------------------ GIF search (GIPHY, KLIPY)
+// Public client keys (VITE_ in the launcher, PUBLIC_ on the website). A source
+// without a key doesn't show; without any the button doesn't either. Two
+// sources because each has gaps: KLIPY (what Discord added after Tenor's API
+// shut down) often finds memes GIPHY doesn't.
 const GIPHY_KEY = import.meta.env.VITE_GIPHY_KEY || import.meta.env.PUBLIC_GIPHY_KEY || ''
+const KLIPY_KEY = import.meta.env.VITE_KLIPY_KEY || import.meta.env.PUBLIC_KLIPY_KEY || ''
 
 async function giphy(q) {
   const base = 'https://api.giphy.com/v1/gifs/'
@@ -330,13 +333,45 @@ async function giphy(q) {
   })).filter(g => g.preview && g.url)
 }
 
+/** KLIPY wants an anonymous id per device (no account data). */
+function klipyCustomer() {
+  try {
+    let id = localStorage.getItem('auch.klipyCustomer')
+    if (!id) { id = crypto.randomUUID(); localStorage.setItem('auch.klipyCustomer', id) }
+    return id
+  } catch { return 'auch-anon' }
+}
+
+async function klipy(q) {
+  const params = new URLSearchParams({ page: '1', per_page: '24', customer_id: klipyCustomer(), locale: 'de' })
+  if (q) params.set('q', q)
+  const r = await fetch(`https://api.klipy.com/api/v1/${encodeURIComponent(KLIPY_KEY)}/gifs/${q ? 'search' : 'trending'}?${params}`)
+  if (!r.ok) throw new Error('GIF-Suche gerade nicht erreichbar.')
+  const json = await r.json()
+  return (json?.data?.data || [])
+    .filter(g => g?.type !== 'ad' && g?.file)
+    .map(g => {
+      const small = g.file.sm?.gif || g.file.xs?.gif
+      const big = g.file.md?.gif?.size < 8e6 ? g.file.md.gif : g.file.sm?.gif || g.file.hd?.gif
+      return { id: String(g.id), preview: small?.url, url: big?.url, w: Number(small?.width) || 100, h: Number(small?.height) || 100 }
+    })
+    .filter(g => g.preview && g.url)
+}
+
+const SOURCES = [
+  { id: 'giphy', label: 'GIPHY', key: GIPHY_KEY, search: giphy },
+  { id: 'klipy', label: 'KLIPY', key: KLIPY_KEY, search: klipy },
+].filter(s => s.key)
+
 export function GifButton({ onPick }) {
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
+  const [src, setSrc] = useState(() => { try { return localStorage.getItem('auch.gifSource') } catch { return null } })
   const [items, setItems] = useState(null)
   const [error, setError] = useState(null)
   const box = useRef(null)
   const timer = useRef(null)
+  const source = SOURCES.find(s => s.id === src) || SOURCES[0]
   useEffect(() => {
     if (!open) return
     const off = e => { if (!box.current?.contains(e.target)) setOpen(false) }
@@ -344,14 +379,19 @@ export function GifButton({ onPick }) {
     return () => window.removeEventListener('mousedown', off)
   }, [open])
   useEffect(() => {
-    if (!open) return
+    if (!open || !source) return
     clearTimeout(timer.current)
+    setItems(null)
     timer.current = setTimeout(() => {
-      giphy(q.trim()).then(r => { setItems(r); setError(null) }).catch(e => setError(e.message))
+      source.search(q.trim()).then(r => { setItems(r); setError(null) }).catch(e => setError(e.message))
     }, q ? 350 : 0)
     return () => clearTimeout(timer.current)
-  }, [open, q])
-  if (!GIPHY_KEY) return null
+  }, [open, q, source?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  if (!source) return null
+  function pickSource(id) {
+    setSrc(id)
+    try { localStorage.setItem('auch.gifSource', id) } catch { /* ignore */ }
+  }
   return (
     <div ref={box} className="relative">
       <button type="button" onClick={() => setOpen(o => !o)} title="GIF"
@@ -360,6 +400,11 @@ export function GifButton({ onPick }) {
       </button>
       {open && (
         <div className="card absolute bottom-full right-0 z-40 mb-2 flex w-[310px] flex-col bg-ink-800/95 p-2 shadow-lift">
+          {SOURCES.length > 1 && (
+            <div className="mb-1.5 flex gap-1">
+              {SOURCES.map(s => <TabBtn key={s.id} on={s.id === source.id} onClick={() => pickSource(s.id)}>{s.label}</TabBtn>)}
+            </div>
+          )}
           <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="GIFs suchen"
             className="mb-2 h-9 w-full rounded-lg border border-white/10 bg-white/[0.05] px-3 text-[13px] text-white outline-none focus-visible:outline-none placeholder:text-ink-500 focus:border-brand-400" />
           <div className="h-64 overflow-y-auto">
@@ -375,7 +420,7 @@ export function GifButton({ onPick }) {
               ))}
             </div>
           </div>
-          <div className="mt-1.5 text-right text-[9.5px] font-semibold uppercase tracking-[0.14em] text-ink-500">Powered by GIPHY</div>
+          <div className="mt-1.5 text-right text-[9.5px] font-semibold uppercase tracking-[0.14em] text-ink-500">Powered by {source.label}</div>
         </div>
       )}
     </div>
