@@ -61,7 +61,8 @@ export function GroupAvatar({ title = '', id = '', size = 36 }) {
 
 const iconBtn = 'grid h-8 w-8 shrink-0 place-items-center rounded-lg text-ink-300 hover:bg-white/[0.07] hover:text-white'
 
-export default function ChatPanel() {
+/** The open chat. `compact` (overlay): no header, the tab above shows who it is. */
+export default function ChatPanel({ compact = false }) {
   const chat = useSocial(s => s.chat)
   const list = useSocial(s => (s.chat ? s.messages[s.chat.convId] : null))
   const onlineAll = useSocial(s => s.online)
@@ -174,7 +175,7 @@ export default function ChatPanel() {
     <div className="flex h-full flex-col"
       onDragOver={e => { if ([...(e.dataTransfer?.types || [])].includes('Files')) e.preventDefault() }}
       onDrop={e => { const f = e.dataTransfer?.files?.[0]; if (f) { e.preventDefault(); upload(f) } }}>
-      <div className="relative flex items-center gap-2 border-b border-white/[0.06] px-4 py-3">
+      {!compact && <div className="relative flex items-center gap-2 border-b border-white/[0.06] px-4 py-3">
         {group ? (
           <>
             <GroupAvatar title={chat.title} id={chat.convId} size={34} />
@@ -221,7 +222,7 @@ export default function ChatPanel() {
             )}
           </div>
         )}
-      </div>
+      </div>}
 
       <div ref={scroller} onScroll={e => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60 }}
         onLoadCapture={() => { const el = scroller.current; if (el && stick.current) el.scrollTop = el.scrollHeight }}

@@ -290,14 +290,21 @@ export function MediaMessage({ m }) {
 /** Paper clip next to the message field: pick a picture or video. */
 export function AttachButton({ onFile, busy }) {
   const input = useRef(null)
+  useEffect(() => {
+    const el = input.current
+    const done = () => { window.__auchPicking = false }
+    el?.addEventListener('cancel', done)
+    return () => el?.removeEventListener('cancel', done)
+  }, [])
   return (
     <>
-      <button type="button" onClick={() => input.current?.click()} disabled={busy} title="Bild oder Video schicken"
+      <button type="button" onClick={() => { window.__auchPicking = true; input.current?.click() }} disabled={busy} title="Bild oder Video schicken"
         className="grid h-8 w-8 place-items-center rounded-lg text-ink-400 transition hover:bg-white/[0.07] hover:text-white disabled:opacity-50">
         {busy ? <Loader2 size={16} className="animate-spin" /> : <ImagePlus size={17} />}
       </button>
+      {/* __auchPicking: the file dialog is open, so the overlay doesn't fold up when it takes the focus. */}
       <input ref={input} type="file" accept="image/*,video/mp4,video/webm" hidden
-        onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) onFile(f) }} />
+        onChange={e => { window.__auchPicking = false; const f = e.target.files?.[0]; e.target.value = ''; if (f) onFile(f) }} />
     </>
   )
 }

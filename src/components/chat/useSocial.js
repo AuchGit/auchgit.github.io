@@ -234,6 +234,30 @@ export const useSocial = create((set, get) => ({
     await get()._loadMessages(conv.id)
   },
 
+  /**
+   * Opens a chat without touching the sidebar (overlay tabs): a conversation
+   * from `convs`, or a friend you haven't written with yet.
+   */
+  async focusChat({ conv, friend }) {
+    let convId = conv?.id
+    if (!convId) {
+      const { data, error } = await supabase.rpc('social_open_direct', { other: friend.user_id })
+      if (error) throw new Error(germanError(error))
+      convId = data
+    }
+    if (conv?.kind === 'group') {
+      const prev = get().chat?.convId === convId ? get().chat.members : null
+      set({ chat: { convId, kind: 'group', title: conv.title, members: prev } })
+      get()._loadMembers(convId)
+    } else {
+      const otherId = friend?.user_id || conv.other_id
+      const f = get().friends.find(x => x.user_id === otherId) || friend || { user_id: otherId, player_name: conv?.title || '?' }
+      set({ chat: { convId, kind: 'direct', friend: f } })
+    }
+    await get()._loadMessages(convId)
+    return convId
+  },
+
   async _loadMembers(convId) {
     const { data } = await supabase.rpc('social_members_of', { conv: convId })
     const chat = get().chat
