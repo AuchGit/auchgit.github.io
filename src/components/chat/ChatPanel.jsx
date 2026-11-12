@@ -4,17 +4,25 @@ import { useSocial } from './useSocial'
 import { useLauncher } from './shim'
 import { api } from './shim'
 import { PersonAvatar, ago } from './Person'
-import { AttachButton, EmojiButton, GifButton, InviteButton, InviteCard, LinkPreview, MediaMessage, emojiOnly, onlyImage } from './Extras'
+import { AttachButton, EmojiButton, Emote, EmoteSuggest, GifButton, InviteButton, InviteCard, LinkPreview, MediaMessage, emojiOnly, emoteSuggestions, onlyImage } from './Extras'
+import { emote, emotesOnly, withEmotes } from './emotes'
 
 const URL_RE = /(https?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]])/gi
 const GROUP_GAP = 5 * 60 * 1000
 
-/** Message text with clickable links (they open in the browser). */
+/** Message text with clickable links (they open in the browser) and emotes as pictures. */
 function Text({ body }) {
   const parts = body.split(URL_RE)
   return parts.map((p, i) => (i % 2 === 1
     ? <a key={i} href={p} onClick={e => { e.preventDefault(); api.openLink(p).catch(() => {}) }} className="underline decoration-white/40 underline-offset-2 hover:decoration-white break-all">{p}</a>
-    : <Fragment key={i}>{p}</Fragment>))
+    : <Fragment key={i}>{withEmotes(p).map((x, j) => (typeof x === 'string' ? <Fragment key={j}>{x}</Fragment> : <Emote key={j} e={x} />))}</Fragment>))
+}
+
+/** A message of only emotes: big, without a bubble. */
+function BigEmotes({ body }) {
+  const words = body.trim().split(/\s+/)
+  const size = words.length === 1 ? 56 : 44
+  return <div className="flex items-end gap-1">{words.map((w, i) => <Emote key={i} e={emote(w)} size={size} />)}</div>
 }
 
 function dayLabel(d) {
@@ -68,6 +76,7 @@ export default function ChatPanel() {
   const openModal = useLauncher(s => s.openModal)
 
   const [text, setText] = useState('')
+  const [caret, setCaret] = useState(0)
   const [error, setError] = useState(null)
   const [menu, setMenu] = useState(false)
   const [leaving, setLeaving] = useState(false)
@@ -79,7 +88,7 @@ export default function ChatPanel() {
   const friend = chat?.friend
   const online = friend ? onlineAll[friend.user_id] : null
 
-  useEffect(() => { setText(''); setError(null); setMenu(false); setLeaving(false); stick.current = true; input.current?.focus() }, [chat?.convId])
+  useEffect(() => { setText(''); setCaret(0); setError(null); setMenu(false); setLeaving(false); stick.current = true; input.current?.focus() }, [chat?.convId])
 
   // Stay at the bottom while new messages come in, unless the user scrolled up.
   useLayoutEffect(() => {
@@ -118,13 +127,31 @@ export default function ChatPanel() {
     try { await useSocial.getState().sendMedia(file) } catch (e) { setError(e.message) }
   }
 
-  function insert(emoji) {
+  /** Puts an emoji (or, with `word`, an emote code with spaces around it) at the cursor. */
+  function insert(piece, word = false) {
     const el = input.current
     const start = el?.selectionStart ?? text.length
     const end = el?.selectionEnd ?? text.length
-    const next = text.slice(0, start) + emoji + text.slice(end)
+    let add = piece
+    if (word) {
+      if (start > 0 && !/\s/.test(text[start - 1])) add = ' ' + add
+      if (!/^\s/.test(text.slice(end))) add += ' '
+    }
+    const next = text.slice(0, start) + add + text.slice(end)
     setText(next)
-    requestAnimationFrame(() => { el?.focus(); el?.setSelectionRange(start + emoji.length, start + emoji.length) })
+    setCaret(start + add.length)
+    requestAnimationFrame(() => { el?.focus(); el?.setSelectionRange(start + add.length, start + add.length) })
+  }
+
+  // Emote suggestions for the word left of the cursor; Tab takes the first one.
+  const suggest = emoteSuggestions(text, caret)
+  function complete(code) {
+    const start = caret - suggest.word.length
+    const add = code + (/^\s/.test(text.slice(caret)) ? '' : ' ')
+    setText(text.slice(0, start) + add + text.slice(caret))
+    setCaret(start + add.length)
+    const el = input.current
+    requestAnimationFrame(() => { el?.focus(); el?.setSelectionRange(start + add.length, start + add.length) })
   }
 
   const typers = chat ? useSocial.getState().typingIn(chat.convId) : []
@@ -231,6 +258,7 @@ export default function ChatPanel() {
                       {m.kind === 'invite' ? <InviteCard m={m} mine={mine} who={who?.player_name} />
                         : m.kind === 'media' ? <MediaMessage m={m} />
                         : emojiOnly(m.body) ? <div className={`leading-tight ${emojiOnly(m.body) === 1 ? 'text-[44px]' : 'text-[34px]'}`}>{m.body}</div>
+                        : emotesOnly(m.body) ? <BigEmotes body={m.body} />
                         : onlyImage(m.body) ? <LinkPreview body={m.body} />
                         : (
                           <>
@@ -267,12 +295,17 @@ export default function ChatPanel() {
           </div>
         )}
         {error && <div className="mb-2 rounded-lg bg-rose-500/10 px-3 py-1.5 text-[12px] text-rose-200">{error}</div>}
+        {suggest.show && <EmoteSuggest list={suggest.list} active={0} onPick={complete} />}
         <div className="flex items-end gap-1 rounded-xl border border-white/10 bg-white/[0.05] py-1.5 pl-1.5 pr-1.5 focus-within:border-brand-400">
           <InviteButton onError={setError} />
           <AttachButton onFile={upload} busy={uploading} />
           <textarea ref={input} rows={1} value={text} maxLength={2000}
-            onChange={e => { setText(e.target.value); if (e.target.value.trim()) useSocial.getState().typingPing() }}
-            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit() } }}
+            onChange={e => { setText(e.target.value); setCaret(e.target.selectionStart ?? e.target.value.length); if (e.target.value.trim()) useSocial.getState().typingPing() }}
+            onSelect={e => setCaret(e.currentTarget.selectionStart ?? 0)}
+            onKeyDown={e => {
+              if ((e.key === 'Tab' && suggest.list.length) || (e.key === 'Enter' && suggest.show)) { e.preventDefault(); complete(suggest.list[0].code); return }
+              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit() }
+            }}
             onPaste={e => { const f = [...(e.clipboardData?.files || [])][0]; if (f && /^(image|video)\//.test(f.type)) { e.preventDefault(); upload(f) } }}
             placeholder={group ? `Nachricht an ${chat.title}` : `Nachricht an ${friend.player_name}`}
             className="max-h-[132px] min-h-[28px] flex-1 resize-none bg-transparent px-1.5 py-1 text-[13px] leading-snug text-white outline-none focus-visible:outline-none placeholder:text-ink-500" />

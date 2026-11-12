@@ -4,6 +4,7 @@ import { Gamepad2, ImagePlus, Loader2, Play, Smile } from 'lucide-react'
 import { gameState, useLauncher } from './shim'
 import { useSocial } from './useSocial'
 import { api } from './shim'
+import { EMOTES, emote } from './emotes'
 
 // ------------------------------------------------------------------ emojis
 const SETS = [
@@ -17,9 +18,14 @@ const SETS = [
 const RECENT = 'auch.emoji.recent'
 const loadRecent = () => { try { return JSON.parse(localStorage.getItem(RECENT)) || [] } catch { return [] } }
 
+/**
+ * Smiley button: emojis by topic, Twitch-style emotes, and the last ones used.
+ * `onPick(text, word)`: word = true for an emote code (needs spaces around it).
+ */
 export function EmojiButton({ onPick }) {
   const [open, setOpen] = useState(false)
   const [tab, setTab] = useState(() => (loadRecent().length ? -1 : 0))
+  const [filter, setFilter] = useState('')
   const box = useRef(null)
   useEffect(() => {
     if (!open) return
@@ -28,14 +34,18 @@ export function EmojiButton({ onPick }) {
     return () => window.removeEventListener('mousedown', off)
   }, [open])
   const recent = loadRecent()
-  const list = tab === -1 ? recent : SETS[tab][1]
+  const EMOTE_TAB = SETS.length
+  const q = filter.trim().toLowerCase()
+  const list = tab === -1 ? recent
+    : tab === EMOTE_TAB ? EMOTES.filter(e => !q || e.code.toLowerCase().includes(q)).map(e => e.code)
+    : SETS[tab][1]
   function pick(e) {
     try { localStorage.setItem(RECENT, JSON.stringify([e, ...recent.filter(x => x !== e)].slice(0, 24))) } catch { /* ignore */ }
-    onPick(e)
+    onPick(e, !!emote(e))
   }
   return (
     <div ref={box} className="relative">
-      <button type="button" onClick={() => setOpen(o => !o)} title="Emoji"
+      <button type="button" onClick={() => setOpen(o => !o)} title="Emojis und Emotes"
         className={`grid h-8 w-8 place-items-center rounded-lg transition ${open ? 'bg-white/[0.1] text-white' : 'text-ink-400 hover:bg-white/[0.07] hover:text-white'}`}>
         <Smile size={17} />
       </button>
@@ -43,17 +53,63 @@ export function EmojiButton({ onPick }) {
         <div className="card absolute bottom-full right-0 z-40 mb-2 w-[300px] bg-ink-800/95 p-2 shadow-lift">
           <div className="mb-1.5 flex gap-1 overflow-x-auto">
             {recent.length > 0 && <TabBtn on={tab === -1} onClick={() => setTab(-1)}>Zuletzt</TabBtn>}
+            <TabBtn on={tab === EMOTE_TAB} onClick={() => setTab(EMOTE_TAB)}>Emotes</TabBtn>
             {SETS.map(([name], i) => <TabBtn key={name} on={tab === i} onClick={() => setTab(i)}>{name}</TabBtn>)}
           </div>
-          <div className="grid max-h-56 grid-cols-8 gap-0.5 overflow-y-auto">
-            {list.map(e => (
-              <button key={e} type="button" onClick={() => pick(e)} className="grid h-9 place-items-center rounded-lg text-[20px] leading-none hover:bg-white/[0.08]">{e}</button>
-            ))}
+          {tab === EMOTE_TAB && (
+            <input autoFocus value={filter} onChange={e => setFilter(e.target.value)} placeholder="Emote suchen (KEKW, Pog …)"
+              className="mb-1.5 h-8 w-full rounded-lg border border-white/10 bg-white/[0.05] px-2.5 text-[12.5px] text-white outline-none focus-visible:outline-none placeholder:text-ink-500 focus:border-brand-400" />
+          )}
+          <div className={`grid max-h-56 gap-0.5 overflow-y-auto ${tab === EMOTE_TAB ? 'grid-cols-6' : 'grid-cols-8'}`}>
+            {list.map(e => {
+              const em = emote(e)
+              return (
+                <button key={e} type="button" onClick={() => pick(e)} title={em ? e : undefined}
+                  className={`grid place-items-center rounded-lg leading-none hover:bg-white/[0.08] ${em ? 'h-11' : 'h-9 text-[20px]'}`}>
+                  {em ? <img src={em.url} alt={e} loading="lazy" className="max-h-8 max-w-[40px]" /> : e}
+                </button>
+              )
+            })}
+            {tab === EMOTE_TAB && list.length === 0 && <p className="col-span-6 p-2 text-[12px] text-ink-400">Kein Emote mit dem Namen.</p>}
           </div>
         </div>
       )}
     </div>
   )
+}
+
+/**
+ * Emote completion for the word left of the cursor (2+ letters, case-insensitive).
+ * Tab completes it like on Twitch; the suggestion bar only shows for ":kek",
+ * so normal words don't keep popping it up.
+ */
+export function emoteSuggestions(text, caret) {
+  const m = text.slice(0, caret).match(/(?:^|\s)(:?)([^\s:]{2,})$/)
+  if (!m) return { word: '', list: [], show: false }
+  const w = m[2].toLowerCase()
+  const list = EMOTES.filter(e => e.code.toLowerCase().startsWith(w) && (m[1] || e.code !== m[2])).slice(0, 7)
+  return { word: m[1] + m[2], list, show: !!m[1] && list.length > 0 }
+}
+
+export function EmoteSuggest({ list, active, onPick }) {
+  if (!list.length) return null
+  return (
+    <div className="card absolute bottom-full left-3 right-3 z-30 mb-1 flex items-center gap-1 overflow-x-auto bg-ink-800/95 p-1 shadow-lift">
+      {list.map((e, i) => (
+        <button key={e.code} type="button" onMouseDown={ev => ev.preventDefault()} onClick={() => onPick(e.code)}
+          className={`flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-1.5 text-[12px] ${i === active ? 'bg-white/[0.12] text-white' : 'text-ink-300 hover:bg-white/[0.07]'}`}>
+          <img src={e.url} alt="" className="h-6 max-w-[36px]" />
+          {e.code}
+        </button>
+      ))}
+      <span className="ml-1 shrink-0 text-[10.5px] text-ink-500">Tab</span>
+    </div>
+  )
+}
+
+/** One emote inside a message. */
+export function Emote({ e, size = 28 }) {
+  return <img src={e.url} alt={e.code} title={e.code} loading="lazy" className="inline-block align-middle" style={{ height: size, maxWidth: size * 2.2, margin: '-4px 1px' }} />
 }
 
 function TabBtn({ on, onClick, children }) {
