@@ -358,20 +358,20 @@ async function klipy(q) {
     .filter(g => g.preview && g.url)
 }
 
+// Both are searched at once; each keeps its own block (GIPHY doesn't allow mixing
+// its results with other providers' in one grid). KLIPY first: it has more memes.
 const SOURCES = [
-  { id: 'giphy', label: 'GIPHY', key: GIPHY_KEY, search: giphy },
   { id: 'klipy', label: 'KLIPY', key: KLIPY_KEY, search: klipy },
+  { id: 'giphy', label: 'GIPHY', key: GIPHY_KEY, search: giphy },
 ].filter(s => s.key)
 
 export function GifButton({ onPick }) {
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
-  const [src, setSrc] = useState(() => { try { return localStorage.getItem('auch.gifSource') } catch { return null } })
-  const [items, setItems] = useState(null)
-  const [error, setError] = useState(null)
+  const [results, setResults] = useState({}) // source id -> { items } | { error }
   const box = useRef(null)
   const timer = useRef(null)
-  const source = SOURCES.find(s => s.id === src) || SOURCES[0]
+  const seq = useRef(0)
   useEffect(() => {
     if (!open) return
     const off = e => { if (!box.current?.contains(e.target)) setOpen(false) }
@@ -379,19 +379,21 @@ export function GifButton({ onPick }) {
     return () => window.removeEventListener('mousedown', off)
   }, [open])
   useEffect(() => {
-    if (!open || !source) return
+    if (!open || !SOURCES.length) return
     clearTimeout(timer.current)
-    setItems(null)
+    const n = ++seq.current
+    setResults({})
     timer.current = setTimeout(() => {
-      source.search(q.trim()).then(r => { setItems(r); setError(null) }).catch(e => setError(e.message))
+      for (const s of SOURCES) {
+        s.search(q.trim())
+          .then(items => { if (seq.current === n) setResults(r => ({ ...r, [s.id]: { items } })) })
+          .catch(e => { if (seq.current === n) setResults(r => ({ ...r, [s.id]: { error: e.message } })) })
+      }
     }, q ? 350 : 0)
     return () => clearTimeout(timer.current)
-  }, [open, q, source?.id]) // eslint-disable-line react-hooks/exhaustive-deps
-  if (!source) return null
-  function pickSource(id) {
-    setSrc(id)
-    try { localStorage.setItem('auch.gifSource', id) } catch { /* ignore */ }
-  }
+  }, [open, q])
+  if (!SOURCES.length) return null
+  const pick = url => { setOpen(false); setQ(''); onPick(url) }
   return (
     <div ref={box} className="relative">
       <button type="button" onClick={() => setOpen(o => !o)} title="GIF"
@@ -400,27 +402,33 @@ export function GifButton({ onPick }) {
       </button>
       {open && (
         <div className="card absolute bottom-full right-0 z-40 mb-2 flex w-[310px] flex-col bg-ink-800/95 p-2 shadow-lift">
-          {SOURCES.length > 1 && (
-            <div className="mb-1.5 flex gap-1">
-              {SOURCES.map(s => <TabBtn key={s.id} on={s.id === source.id} onClick={() => pickSource(s.id)}>{s.label}</TabBtn>)}
-            </div>
-          )}
           <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="GIFs suchen"
             className="mb-2 h-9 w-full rounded-lg border border-white/10 bg-white/[0.05] px-3 text-[13px] text-white outline-none focus-visible:outline-none placeholder:text-ink-500 focus:border-brand-400" />
-          <div className="h-64 overflow-y-auto">
-            {error && <p className="p-2 text-[12px] text-rose-200">{error}</p>}
-            {!items && !error && <div className="grid h-full place-items-center text-ink-500"><Loader2 size={16} className="animate-spin" /></div>}
-            {items?.length === 0 && <p className="p-2 text-[12px] text-ink-400">Nix gefunden.</p>}
-            <div className="columns-2 gap-1.5">
-              {items?.map(g => (
-                <button key={g.id} type="button" onClick={() => { setOpen(false); setQ(''); onPick(g.url) }}
-                  className="mb-1.5 block w-full overflow-hidden rounded-lg bg-white/[0.04] hover:ring-2 hover:ring-brand-400">
-                  <img src={g.preview} alt="" loading="lazy" className="w-full" style={{ aspectRatio: `${g.w} / ${g.h}` }} />
-                </button>
-              ))}
-            </div>
+          <div className="h-72 overflow-y-auto">
+            {SOURCES.map((s, i) => {
+              const r = results[s.id]
+              return (
+                <section key={s.id} className={i ? 'mt-2 border-t border-white/[0.06] pt-2' : ''}>
+                  <div className="mb-1.5 flex items-center justify-between px-0.5 text-[9.5px] font-semibold uppercase tracking-[0.14em] text-ink-500">
+                    <span>{s.label}</span><span>Powered by {s.label}</span>
+                  </div>
+                  {!r && <div className="grid h-16 place-items-center text-ink-500"><Loader2 size={16} className="animate-spin" /></div>}
+                  {r?.error && <p className="px-1 pb-1 text-[12px] text-rose-200">{r.error}</p>}
+                  {r?.items?.length === 0 && <p className="px-1 pb-1 text-[12px] text-ink-400">Nix gefunden.</p>}
+                  {r?.items?.length > 0 && (
+                    <div className="columns-2 gap-1.5">
+                      {r.items.map(g => (
+                        <button key={g.id} type="button" onClick={() => pick(g.url)}
+                          className="mb-1.5 block w-full overflow-hidden rounded-lg bg-white/[0.04] hover:ring-2 hover:ring-brand-400">
+                          <img src={g.preview} alt="" loading="lazy" className="w-full" style={{ aspectRatio: `${g.w} / ${g.h}` }} />
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </section>
+              )
+            })}
           </div>
-          <div className="mt-1.5 text-right text-[9.5px] font-semibold uppercase tracking-[0.14em] text-ink-500">Powered by {source.label}</div>
         </div>
       )}
     </div>
