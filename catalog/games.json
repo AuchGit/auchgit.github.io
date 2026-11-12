@@ -17,6 +17,7 @@
       "art": "art/stop-resisting.jpg",
       "repo": "AuchGit/StopResisting",
       "productName": "Stop Resisting",
+      "identifier": "com.stopresisting.game",
       "exe": "stop-resisting.exe",
       "order": 1
     },
@@ -34,6 +35,7 @@
       "art": "art/cardgame.jpg",
       "repo": "AuchGit/Cardgame",
       "productName": "Cardgame",
+      "identifier": "com.miles.cardgame",
       "exe": "cardgame.exe",
       "order": 2
     },
@@ -51,6 +53,7 @@
       "art": "art/dissonance.jpg",
       "repo": "AuchGit/Dissonance",
       "productName": "Dissonance Demo",
+      "identifier": "com.miles.dissonance",
       "exe": "dissonance.exe",
       "order": 3
     }
