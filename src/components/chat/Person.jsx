@@ -1,9 +1,34 @@
 import { initials, personColor } from '../../lib/supabase'
 
-/** Profile picture (or initials) with an online / in-game dot. */
+/** Own status and what others see: online, afk, dnd; invisible / offline look the same from outside. */
+export const STATUS = {
+  online: { label: 'Online', dot: 'bg-emerald-400', hint: 'Alle sehen, dass du da bist.' },
+  afk: { label: 'Abwesend', dot: 'bg-amber-400', hint: 'Du bist kurz weg.' },
+  dnd: { label: 'Bitte nicht stören', dot: 'bg-rose-500', hint: 'Keine Sounds, Vorschauen und Windows-Meldungen.' },
+  invisible: { label: 'Unsichtbar', dot: 'bg-ink-400', hint: 'Du siehst alle, für die anderen bist du offline.' },
+  offline: { label: 'Offline', dot: 'bg-ink-600', hint: 'Keine Verbindung, keine neuen Nachrichten, bis du wieder on gehst.' },
+}
+
+/** What someone's presence entry means for their dot: 'game' | 'online' | 'afk' | 'dnd' | null (offline). */
+export function presenceStatus(p) {
+  if (!p) return null
+  if (p.status === 'dnd') return 'dnd'
+  if (p.status === 'afk') return 'afk'
+  return p.game ? 'game' : 'online'
+}
+
+/** Own dot: playing beats online; afk while idle. */
+export function ownStatus(status, game, idle) {
+  if (status === 'online') return idle ? 'afk' : game ? 'game' : 'online'
+  return status
+}
+
+const DOTS = { game: 'bg-brand-400', online: 'bg-emerald-400', afk: 'bg-amber-400', dnd: 'bg-rose-500', invisible: 'bg-ink-400', offline: 'bg-ink-600' }
+
+/** Profile picture (or initials) with a status dot. */
 export function PersonAvatar({ id, name, url, size = 36, status = null, ring = false }) {
   const c = personColor(id)
-  const dot = status === 'game' ? 'bg-brand-400' : status === 'online' ? 'bg-emerald-400' : null
+  const dot = DOTS[status] || null
   return (
     <span className="relative inline-block shrink-0" style={{ width: size, height: size }}>
       {url ? (

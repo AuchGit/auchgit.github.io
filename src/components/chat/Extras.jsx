@@ -178,7 +178,7 @@ const SITE = 'https://auchgit.github.io/'
 const artUrl = game => (!game?.art ? null : /^https:\/\//.test(game.art) ? game.art : SITE + game.art)
 
 /** Button next to the message field: pick a game and invite the chat. */
-export function InviteButton({ onError }) {
+export function InviteButton({ onError, convId }) {
   const games = useLauncher(s => s.catalog.games)
   const playing = useSocial(s => s.game)
   const [open, setOpen] = useState(false)
@@ -193,7 +193,7 @@ export function InviteButton({ onError }) {
   const sorted = [...games].sort((a, b) => (b.name === playing) - (a.name === playing))
   async function invite(g) {
     setOpen(false)
-    try { await useSocial.getState().sendInvite({ ...g, artUrl: artUrl(g) }) } catch (e) { onError?.(e.message) }
+    try { await useSocial.getState().sendInvite({ ...g, artUrl: artUrl(g) }, convId) } catch (e) { onError?.(e.message) }
   }
   return (
     <div ref={box} className="relative">

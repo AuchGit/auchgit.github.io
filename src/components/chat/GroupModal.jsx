@@ -3,7 +3,7 @@ import { Check, Loader2, Users } from 'lucide-react'
 import { useSocial } from './useSocial'
 import { useLauncher } from './shim'
 import { Modal } from './shim'
-import { PersonAvatar } from './Person'
+import { PersonAvatar, presenceStatus } from './Person'
 
 /** New group (no convId) or adding friends to an open group. */
 export function GroupModal({ convId }) {
@@ -53,7 +53,7 @@ export function GroupModal({ convId }) {
             return (
               <li key={f.user_id}>
                 <button onClick={() => toggle(f.user_id)} className="flex w-full items-center gap-3 rounded-xl px-2 py-1.5 text-left hover:bg-white/[0.05]">
-                  <PersonAvatar id={f.user_id} name={f.player_name} url={f.avatar_url} size={32} status={online[f.user_id] ? (online[f.user_id].game ? 'game' : 'online') : null} />
+                  <PersonAvatar id={f.user_id} name={f.player_name} url={f.avatar_url} size={32} status={presenceStatus(online[f.user_id])} />
                   <span className="min-w-0 flex-1 truncate text-[13.5px]">{f.player_name}</span>
                   <span className={`grid h-5 w-5 place-items-center rounded-md border transition ${on ? 'border-brand-400 bg-brand-500 text-white' : 'border-white/20'}`}>{on && <Check size={13} strokeWidth={3} />}</span>
                 </button>

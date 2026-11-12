@@ -3,7 +3,7 @@ import { LogOut, Loader2, MoreHorizontal, SendHorizontal, UserPlus, Users, X } f
 import { useSocial } from './useSocial'
 import { useLauncher } from './shim'
 import { api } from './shim'
-import { PersonAvatar, ago } from './Person'
+import { PersonAvatar, STATUS, ago, presenceStatus } from './Person'
 import { AttachButton, EmojiButton, Emote, EmoteSuggest, GifButton, InviteButton, InviteCard, LinkPreview, MediaMessage, emojiOnly, emoteSuggestions, onlyImage } from './Extras'
 import { emote, emotesOnly, withEmotes } from './emotes'
 
@@ -61,17 +61,22 @@ export function GroupAvatar({ title = '', id = '', size = 36 }) {
 
 const iconBtn = 'grid h-8 w-8 shrink-0 place-items-center rounded-lg text-ink-300 hover:bg-white/[0.07] hover:text-white'
 
-/** The open chat. `compact` (overlay): no header, the tab above shows who it is. */
-export default function ChatPanel({ compact = false }) {
-  const chat = useSocial(s => s.chat)
-  const list = useSocial(s => (s.chat ? s.messages[s.chat.convId] : null))
+/**
+ * The open chat (the sidebar's), or with `convId` one of the chats open in the
+ * overlay windows. `compact`: no header, the tab above shows who it is.
+ * `tools`: extra buttons next to the message field, gets { upload, setError }.
+ */
+export default function ChatPanel({ compact = false, convId = null, autoFocus = true, tools = null }) {
+  const chat = useSocial(s => (convId ? s.views[convId] : s.chat))
+  const id = chat?.convId
+  const list = useSocial(s => (id ? s.messages[id] : null))
   const onlineAll = useSocial(s => s.online)
   const friends = useSocial(s => s.friends)
   const uid = useSocial(s => s.session?.user?.id)
   const sending = useSocial(s => s.sending)
   const uploading = useSocial(s => s.uploading)
-  const typingMap = useSocial(s => (s.chat ? s.typing[s.chat.convId] : null))
-  const reads = useSocial(s => (s.chat ? s.reads[s.chat.convId] : null))
+  const typingMap = useSocial(s => (id ? s.typing[id] : null))
+  const reads = useSocial(s => (id ? s.reads[id] : null))
   const [, tick] = useState(0)
   const { send, closeChat, leaveGroup } = useSocial.getState()
   const openModal = useLauncher(s => s.openModal)
@@ -89,7 +94,7 @@ export default function ChatPanel({ compact = false }) {
   const friend = chat?.friend
   const online = friend ? onlineAll[friend.user_id] : null
 
-  useEffect(() => { setText(''); setCaret(0); setError(null); setMenu(false); setLeaving(false); stick.current = true; input.current?.focus() }, [chat?.convId])
+  useEffect(() => { setText(''); setCaret(0); setError(null); setMenu(false); setLeaving(false); stick.current = true; if (autoFocus) input.current?.focus() }, [chat?.convId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Stay at the bottom while new messages come in, unless the user scrolled up.
   useLayoutEffect(() => {
@@ -119,13 +124,13 @@ export default function ChatPanel({ compact = false }) {
     setText('')
     setError(null)
     stick.current = true
-    try { await send(body) } catch (e) { setError(e.message); setText(body) }
+    try { await send(body, {}, chat.convId) } catch (e) { setError(e.message); setText(body) }
   }
 
   async function upload(file) {
     setError(null)
     stick.current = true
-    try { await useSocial.getState().sendMedia(file) } catch (e) { setError(e.message) }
+    try { await useSocial.getState().sendMedia(file, chat.convId) } catch (e) { setError(e.message) }
   }
 
   /** Puts an emoji (or, with `word`, an emote code with spaces around it) at the cursor. */
@@ -165,11 +170,11 @@ export default function ChatPanel({ compact = false }) {
   // Who sent what: friends first (fresh names and pictures), then group members.
   const person = id => friends.find(f => f.user_id === id) || chat.members?.find(m => m.user_id === id) || { user_id: id, player_name: '?' }
   const profile = id => { if (id && id !== uid) openModal({ type: 'profile', userId: id }) }
-  const presence = id => (onlineAll[id] ? (onlineAll[id].game ? 'game' : 'online') : null)
+  const presence = id => presenceStatus(onlineAll[id])
   const othersOnline = group ? (chat.members || []).filter(m => m.user_id !== uid && onlineAll[m.user_id]).length : 0
   const status = group
     ? (chat.members ? `${chat.members.length} Leute${othersOnline ? ` · ${othersOnline} online` : ''}` : '…')
-    : online ? (online.game ? <>spielt <span className="text-brand-300">{online.game}</span></> : 'Online') : ago(friend.last_seen)
+    : online ? (online.game ? <>spielt <span className="text-brand-300">{online.game}</span></> : STATUS[presenceStatus(online)]?.label || 'Online') : ago(friend.last_seen)
 
   return (
     <div className="flex h-full flex-col"
@@ -298,19 +303,20 @@ export default function ChatPanel({ compact = false }) {
         {error && <div className="mb-2 rounded-lg bg-rose-500/10 px-3 py-1.5 text-[12px] text-rose-200">{error}</div>}
         {suggest.show && <EmoteSuggest list={suggest.list} active={0} onPick={complete} />}
         <div className="flex items-end gap-1 rounded-xl border border-white/10 bg-white/[0.05] py-1.5 pl-1.5 pr-1.5 focus-within:border-brand-400">
-          <InviteButton onError={setError} />
+          <InviteButton onError={setError} convId={chat.convId} />
           <AttachButton onFile={upload} busy={uploading} />
+          {tools && tools({ upload, setError })}
           <textarea ref={input} rows={1} value={text} maxLength={2000}
-            onChange={e => { setText(e.target.value); setCaret(e.target.selectionStart ?? e.target.value.length); if (e.target.value.trim()) useSocial.getState().typingPing() }}
+            onChange={e => { setText(e.target.value); setCaret(e.target.selectionStart ?? e.target.value.length); if (e.target.value.trim()) useSocial.getState().typingPing(chat.convId) }}
             onSelect={e => setCaret(e.currentTarget.selectionStart ?? 0)}
             onKeyDown={e => {
               if ((e.key === 'Tab' && suggest.list.length) || (e.key === 'Enter' && suggest.show)) { e.preventDefault(); complete(suggest.list[0].code); return }
               if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit() }
             }}
             onPaste={e => { const f = [...(e.clipboardData?.files || [])][0]; if (f && /^(image|video)\//.test(f.type)) { e.preventDefault(); upload(f) } }}
-            placeholder={group ? `Nachricht an ${chat.title}` : `Nachricht an ${friend.player_name}`}
+            placeholder={compact ? 'Nachricht' : group ? `Nachricht an ${chat.title}` : `Nachricht an ${friend.player_name}`}
             className="max-h-[132px] min-h-[28px] flex-1 resize-none bg-transparent px-1.5 py-1 text-[13px] leading-snug text-white outline-none focus-visible:outline-none placeholder:text-ink-500" />
-          <GifButton onPick={url => { setError(null); stick.current = true; send(url).catch(e => setError(e.message)) }} />
+          <GifButton onPick={url => { setError(null); stick.current = true; send(url, {}, chat.convId).catch(e => setError(e.message)) }} />
           <EmojiButton onPick={insert} />
           <button onClick={submit} disabled={!text.trim() || sending} title="Senden (Enter)"
             className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-brand-500 text-white transition hover:brightness-110 disabled:bg-white/[0.06] disabled:text-ink-500">

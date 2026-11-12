@@ -3,7 +3,7 @@ import { ChevronRight, Copy, Check, LogOut, MessageSquarePlus, Globe, MoreHorizo
 import { GroupAvatar } from './ChatPanel'
 import { useSocial } from './useSocial'
 import { useLauncher } from './shim'
-import { PersonAvatar, Badge, ago } from './Person'
+import { PersonAvatar, Badge, STATUS, ago, ownStatus, presenceStatus } from './Person'
 
 const CODE = /^[0-9A-Z]{4}-?[0-9A-Z]{4}$/i
 const RESULT = {
@@ -37,6 +37,26 @@ function Menu({ onClose }) {
   )
 }
 
+/** Own status: online, afk, dnd, invisible, offline. */
+export function StatusMenu({ onClose, className = 'absolute left-3 top-14 z-30 w-64' }) {
+  const status = useSocial(s => s.status)
+  const setStatus = useSocial(s => s.setStatus)
+  return (
+    <div className={`card bg-ink-800/95 p-1.5 shadow-lift ${className}`}>
+      {Object.entries(STATUS).map(([id, s]) => (
+        <button key={id} onClick={() => { setStatus(id); onClose() }}
+          className={`flex w-full items-start gap-2.5 rounded-lg px-3 py-2 text-left hover:bg-white/[0.07] ${status === id ? 'bg-white/[0.06]' : ''}`}>
+          <span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${s.dot}`} />
+          <span className="min-w-0">
+            <span className="block text-[13px] font-medium text-ink-100">{s.label}</span>
+            <span className="block text-[11.5px] leading-snug text-ink-400">{s.hint}</span>
+          </span>
+        </button>
+      ))}
+    </div>
+  )
+}
+
 export default function FriendsPanel({ onCollapse }) {
   const me = useSocial(s => s.me)
   const friends = useSocial(s => s.friends)
@@ -44,6 +64,9 @@ export default function FriendsPanel({ onCollapse }) {
   const convs = useSocial(s => s.convs)
   const chat = useSocial(s => s.chat)
   const game = useSocial(s => s.game)
+  const status = useSocial(s => s.status)
+  const idle = useSocial(s => s.idle)
+  const [picking, setPicking] = useState(false)
   const { setStage, openChat, openGroup, respond, addByCode, request, remove, search } = useSocial.getState()
   const openModal = useLauncher(s => s.openModal)
   const groupsList = convs.filter(c => c.kind === 'group')
@@ -103,13 +126,16 @@ export default function FriendsPanel({ onCollapse }) {
     <div className="flex h-full flex-col">
       {/* me */}
       <div className="relative flex items-center gap-3 border-b border-white/[0.06] px-4 py-3">
-        <PersonAvatar id={me?.id || ''} name={me?.player_name || ''} url={me?.avatar_url} size={38} status={game ? 'game' : 'online'} />
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-semibold">{me?.player_name || '…'}</div>
-          <div className="truncate text-[12px] text-ink-400">{game ? <>spielt <span className="text-brand-300">{game}</span></> : 'Online'}</div>
-        </div>
+        <button onClick={() => setPicking(p => !p)} title="Status ändern" className="group flex min-w-0 flex-1 items-center gap-3 rounded-lg text-left">
+          <PersonAvatar id={me?.id || ''} name={me?.player_name || ''} url={me?.avatar_url} size={38} status={ownStatus(status, game, idle)} />
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-sm font-semibold">{me?.player_name || '…'}</span>
+            <span className="block truncate text-[12px] text-ink-400 group-hover:text-ink-200">{game && status === 'online' && !idle ? <>spielt <span className="text-brand-300">{game}</span></> : STATUS[ownStatus(status, game, idle)]?.label || 'Online'}</span>
+          </span>
+        </button>
         <button className="grid h-8 w-8 place-items-center rounded-lg text-ink-300 hover:bg-white/[0.07] hover:text-white" onClick={() => setMenu(m => !m)} title="Mehr"><MoreHorizontal size={17} /></button>
         {menu && <Menu onClose={() => setMenu(false)} />}
+        {picking && <StatusMenu onClose={() => setPicking(false)} />}
       </div>
 
       {/* code + add/search */}
@@ -170,10 +196,10 @@ export default function FriendsPanel({ onCollapse }) {
             const g = online[p.user_id]?.game
             return (
               <li key={p.user_id} className={`${row} ${chat?.friend?.user_id === p.user_id ? 'bg-white/[0.07]' : ''}`} onClick={() => openChat(p).catch(e => setNote({ kind: 'error', text: e.message }))}>
-                <PersonAvatar id={p.user_id} name={p.player_name} url={p.avatar_url} size={34} status={g ? 'game' : 'online'} />
+                <PersonAvatar id={p.user_id} name={p.player_name} url={p.avatar_url} size={34} status={presenceStatus(online[p.user_id])} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[13px] font-semibold">{p.player_name}</span>
-                  <span className="block truncate text-[11.5px] text-ink-400">{g ? <>spielt <span className="text-brand-300">{g}</span></> : 'Online'}</span>
+                  <span className="block truncate text-[11.5px] text-ink-400">{g && presenceStatus(online[p.user_id]) === 'game' ? <>spielt <span className="text-brand-300">{g}</span></> : STATUS[presenceStatus(online[p.user_id])]?.label || 'Online'}</span>
                 </span>
                 {profileBtn(p)}
                 <Badge n={unread(p.user_id)} />

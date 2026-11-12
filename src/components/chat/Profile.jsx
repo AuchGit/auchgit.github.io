@@ -4,7 +4,7 @@ import { useSocial } from './useSocial'
 import { useLauncher } from './shim'
 import { api } from './shim'
 import { Modal } from './shim'
-import { PersonAvatar, ago } from './Person'
+import { PersonAvatar, ago, presenceStatus } from './Person'
 
 // The same fields the website's profile editor offers.
 const LINKS = [
@@ -94,7 +94,7 @@ export function ProfileModal({ userId }) {
   return (
     <Modal title="" onClose={close} width="max-w-sm">
       <div className="-mt-6 flex flex-col items-center text-center">
-        <PersonAvatar id={person.user_id} name={person.player_name} url={person.avatar_url} size={92} status={presence ? (presence.game ? 'game' : 'online') : null} />
+        <PersonAvatar id={person.user_id} name={person.player_name} url={person.avatar_url} size={92} status={presenceStatus(presence)} />
         <h2 className="mt-3 font-display text-xl font-semibold">{person.player_name}</h2>
         {status && <div className="mt-0.5 text-[13px] text-ink-400">{status}</div>}
         {relation === 'friend' && person.since && (

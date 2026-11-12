@@ -8,6 +8,8 @@
 //   stage     sidebar: 'rail' (avatars only) or 'open' (friend list)
 //   chat      the open chat: { convId, kind: 'direct', friend } or
 //             { convId, kind: 'group', title, members }
+//   views     more chats open at the same time (overlay windows), same shape, by convId
+//   status    own status: online | afk | dnd | invisible (looks offline) | offline (really off)
 //
 // Live: friendship changes and new messages via Postgres changes (RLS keeps
 // them to your own), presence via one shared Realtime channel.
@@ -31,8 +33,10 @@ let channels = []
 let presence = null
 let timers = []
 let inited = false
-let convChannel = null // the open chat: typing and read receipts (broadcast, nothing stored)
-let lastTypingPing = 0
+const convChannels = new Map() // open chats: typing and read receipts (broadcast, nothing stored)
+const lastTypingPing = new Map()
+const leftAt = {} // userId -> when they went offline (no "online" sound for a quick reconnect)
+let connectedAt = 0
 const TYPING_MS = 4000
 const VIDEO_MAX = 15 * 1024 * 1024
 const GIF_MAX = 8 * 1024 * 1024
@@ -80,6 +84,13 @@ export const useSocial = create((set, get) => ({
   typing: {}, // convId -> { userId: { name, at } }
   reads: {},  // convId -> { userId: last read timestamp }
   beta: { access: false, admin: false }, // "In Entwicklung" unlocked? admin (may unlock others)?
+  views: {},
+  watching: [], // chats someone is looking at right now (overlay windows): new messages there count as read
+  status: load('status', 'online'),
+  idle: false,   // no input for a while: shown as "afk" while the status is "online"
+  tracks: true,  // false in the overlays: only the launcher window tells the others you're online
+  /** Set by the app: sounds for new messages, requests, friends coming online. */
+  onEvent: null,
 
   // ------------------------------------------------------------------ lifecycle
   async init() {
@@ -96,30 +107,13 @@ export const useSocial = create((set, get) => ({
 
   _setSession(session) {
     get()._stop()
-    set({ session, me: null, friends: [], convs: [], online: {}, chat: null, messages: {}, beta: { access: false, admin: false } })
+    set({ session, me: null, friends: [], convs: [], online: {}, chat: null, views: {}, messages: {}, beta: { access: false, admin: false } })
     if (session) get()._start()
   },
 
   async _start() {
-    const uid = get().session.user.id
     await Promise.all([get().loadMe(), get().loadFriends(), get().loadConvs()])
-
-    const db = supabase
-      .channel(`social-db-${uid}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'social_friendships' }, p => get()._onFriendship(p))
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'social_messages' }, p => get()._onMessage(p.new))
-      .subscribe()
-    channels.push(db)
-
-    presence = supabase.channel('auch-online', { config: { presence: { key: uid } } })
-    presence
-      .on('presence', { event: 'sync' }, () => {
-        const online = {}
-        for (const [id, metas] of Object.entries(presence.presenceState())) online[id] = metas.find(m => m.game) || metas[metas.length - 1] || {}
-        set({ online })
-      })
-      .subscribe(status => { if (status === 'SUBSCRIBED') get()._track() })
-    channels.push(presence)
+    if (get().status !== 'offline') get()._connect()
 
     timers.push(setInterval(() => get().loadMe(), PROFILE_REFRESH))
     const onFocus = () => {
@@ -131,18 +125,92 @@ export const useSocial = create((set, get) => ({
     timers.push(() => window.removeEventListener('focus', onFocus))
   },
 
-  _stop() {
+  /** Live updates: friendships, new messages, who is online. */
+  _connect() {
+    if (channels.length || !get().session) return
+    const uid = get().session.user.id
+    connectedAt = Date.now()
+    const db = supabase
+      .channel(`social-db-${uid}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'social_friendships' }, p => get()._onFriendship(p))
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'social_messages' }, p => get()._onMessage(p.new))
+      .subscribe()
+    channels.push(db)
+
+    presence = supabase.channel('auch-online', { config: { presence: { key: uid } } })
+    presence
+      .on('presence', { event: 'sync' }, () => {
+        const prev = get().online
+        const online = {}
+        for (const [id, metas] of Object.entries(presence.presenceState())) online[id] = metas.find(m => m.game) || metas[metas.length - 1] || {}
+        set({ online })
+        get()._presenceEvents(prev, online)
+      })
+      .subscribe(status => { if (status === 'SUBSCRIBED') get()._track() })
+    channels.push(presence)
+    // chats that were open before going offline
+    for (const id of new Set([get().chat?.convId, ...Object.keys(get().views)].filter(Boolean))) get()._joinConv(id)
+  },
+
+  _disconnect() {
     get()._leaveConv()
     for (const c of channels) supabase?.removeChannel(c)
     channels = []
     presence = null
+  },
+
+  _stop() {
+    get()._disconnect()
     for (const t of timers) typeof t === 'function' ? t() : clearInterval(t)
     timers = []
   },
 
   _track() {
-    const { me, game } = get()
-    presence?.track({ name: me?.player_name || '', avatar: me?.avatar_url || null, game: game || null, since: Date.now() })
+    if (!presence || !get().tracks) return
+    const { me, game, status, idle } = get()
+    if (status === 'invisible' || status === 'offline') { presence.untrack(); return }
+    const shown = status === 'online' && idle ? 'afk' : status
+    presence.track({ name: me?.player_name || '', avatar: me?.avatar_url || null, game: game || null, status: shown, since: Date.now() })
+  },
+
+  /** Friends coming online or starting a game (not right after connecting, not for a quick reconnect). */
+  _presenceEvents(prev, next) {
+    const now = Date.now()
+    const uid = get().session?.user?.id
+    for (const id of Object.keys(prev)) if (!next[id]) leftAt[id] = now
+    if (now - connectedAt < 8000 || !get().onEvent) return
+    const friend = id => get().friends.find(f => f.user_id === id && f.relation === 'friend')
+    for (const [id, p] of Object.entries(next)) {
+      const f = id !== uid && friend(id)
+      if (!f) continue
+      if (!prev[id] && now - (leftAt[id] || 0) > 120000) get().onEvent('online', { userId: id, name: f.player_name })
+      else if (prev[id] && p.game && p.game !== prev[id].game) get().onEvent('playing', { userId: id, name: f.player_name, game: p.game })
+    }
+  },
+
+  /**
+   * Own status. invisible: you see everyone, nobody sees you. offline: no live
+   * connection at all (no new messages until you come back).
+   */
+  setStatus(status) {
+    save('status', status)
+    get()._applyStatus(status)
+  },
+
+  _applyStatus(status) {
+    const was = get().status
+    set({ status })
+    if (!get().session) return
+    if (status === 'offline') { get()._disconnect(); set({ online: {} }); return }
+    if (was === 'offline' || !channels.length) { get()._connect(); get().loadFriends(); get().loadConvs(); return }
+    get()._track()
+  },
+
+  /** No input for a while (set by the app, see the auto-afk setting). */
+  setIdle(idle) {
+    if (get().idle === idle) return
+    set({ idle })
+    get()._track()
   },
 
   /** Called by the launcher whenever the running game changes. */
@@ -175,13 +243,14 @@ export const useSocial = create((set, get) => ({
   _onFriendship(p) {
     const uid = get().session?.user?.id
     get().loadFriends().then(() => {
-      if (p.eventType === 'INSERT' && p.new?.addressee === uid && backgrounded() && get().notify) {
-        const who = get().friends.find(f => f.request_id === p.new.id)?.player_name || 'Jemand'
-        desktop.notify(`${who} will dich adden`, 'Im Launcher annehmen')
+      const who = () => get().friends.find(f => f.request_id === p.new.id)?.player_name || 'Jemand'
+      if (p.eventType === 'INSERT' && p.new?.addressee === uid) {
+        get().onEvent?.('request', { name: who() })
+        if (backgrounded() && get().notify) desktop.notify(`${who()} will dich adden`, 'Im Launcher annehmen')
       }
-      if (p.eventType === 'UPDATE' && p.new?.status === 'accepted' && p.new?.requester === uid && backgrounded() && get().notify) {
-        const who = get().friends.find(f => f.request_id === p.new.id)?.player_name || 'Jemand'
-        desktop.notify(`${who} hat angenommen`, 'Ihr seid jetzt befreundet')
+      if (p.eventType === 'UPDATE' && p.new?.status === 'accepted' && p.new?.requester === uid) {
+        get().onEvent?.('accepted', { name: who() })
+        if (backgrounded() && get().notify) desktop.notify(`${who()} hat angenommen`, 'Ihr seid jetzt befreundet')
       }
     })
   },
@@ -193,13 +262,18 @@ export const useSocial = create((set, get) => ({
       set({ messages: { ...get().messages, [m.conversation_id]: [...list, m] } })
     }
     const open = get().chat?.convId === m.conversation_id
+    const seen = (open && !backgrounded()) || get().watching.includes(m.conversation_id)
     if (m.sender !== uid) {
       const t = get().typing[m.conversation_id]
       if (t?.[m.sender]) { const { [m.sender]: _, ...rest } = t; set({ typing: { ...get().typing, [m.conversation_id]: rest } }) }
-      if (open && !backgrounded()) get()._markRead(m.conversation_id)
+      if (seen) get()._markRead(m.conversation_id)
       else get().loadConvs()
-      if (open && get().chat.kind === 'group' && m.kind === 'system') get()._loadMembers(m.conversation_id)
-      if ((!open || backgrounded()) && get().notify && m.kind !== 'system') {
+      if (m.kind === 'system' && (open || get().views[m.conversation_id])) get()._loadMembers(m.conversation_id)
+      if (m.kind !== 'system') {
+        const kind = get().convs.find(c => c.id === m.conversation_id)?.kind
+        get().onEvent?.(m.kind === 'invite' ? 'invite' : kind === 'group' ? 'group' : 'dm', { message: m, seen })
+      }
+      if (!seen && get().notify && m.kind !== 'system') {
         const conv = get().convs.find(c => c.id === m.conversation_id)
         const who = get().nameOf(m.sender) || 'Neue Nachricht'
         const text = m.body.length > 120 ? m.body.slice(0, 117) + '…' : m.body
@@ -215,8 +289,8 @@ export const useSocial = create((set, get) => ({
   // ------------------------------------------------------------------ sidebar + chat
   setStage(stage) {
     save('sidebar', stage)
-    if (stage === 'rail') get()._leaveConv()
-    set({ stage, ...(stage === 'rail' ? { chat: null } : {}) })
+    if (stage === 'rail') get().closeChat()
+    set({ stage })
   },
 
   async openChat(friend) {
@@ -224,11 +298,13 @@ export const useSocial = create((set, get) => ({
     save('sidebar', 'open')
     const { data: convId, error } = await supabase.rpc('social_open_direct', { other: friend.user_id })
     if (error) throw new Error(germanError(error))
+    if (get().chat?.convId !== convId) get().closeChat()
     set({ chat: { convId, kind: 'direct', friend } })
     await get()._loadMessages(convId)
   },
 
   async openGroup(conv) {
+    if (get().chat?.convId !== conv.id) get().closeChat()
     set({ stage: 'open', chat: { convId: conv.id, kind: 'group', title: conv.title, members: null } })
     save('sidebar', 'open')
     get()._loadMembers(conv.id)
@@ -236,33 +312,44 @@ export const useSocial = create((set, get) => ({
   },
 
   /**
-   * Opens a chat without touching the sidebar (overlay tabs): a conversation
-   * from `convs`, or a friend you haven't written with yet.
+   * Opens a chat next to the others (overlay windows), without touching the
+   * sidebar: a conversation from `convs`, or a friend you haven't written with yet.
    */
-  async focusChat({ conv, friend }) {
+  async openView({ conv, friend }) {
     let convId = conv?.id
     if (!convId) {
       const { data, error } = await supabase.rpc('social_open_direct', { other: friend.user_id })
       if (error) throw new Error(germanError(error))
       convId = data
     }
-    if (conv?.kind === 'group') {
-      const prev = get().chat?.convId === convId ? get().chat.members : null
-      set({ chat: { convId, kind: 'group', title: conv.title, members: prev } })
-      get()._loadMembers(convId)
+    const c = conv?.kind ? conv : get().convs.find(x => x.id === convId) || conv
+    let view
+    if (c?.kind === 'group') {
+      view = { convId, kind: 'group', title: c.title, members: get().views[convId]?.members || null }
     } else {
-      const otherId = friend?.user_id || conv.other_id
-      const f = get().friends.find(x => x.user_id === otherId) || friend || { user_id: otherId, player_name: conv?.title || '?' }
-      set({ chat: { convId, kind: 'direct', friend: f } })
+      const otherId = friend?.user_id || c?.other_id
+      const f = get().friends.find(x => x.user_id === otherId) || friend || { user_id: otherId, player_name: c?.title || '?' }
+      view = { convId, kind: 'direct', friend: f }
     }
-    await get()._loadMessages(convId)
+    set({ views: { ...get().views, [convId]: view } })
+    if (view.kind === 'group') get()._loadMembers(convId)
+    if (get().messages[convId]) { get()._joinConv(convId); await get()._markRead(convId) }
+    else await get()._loadMessages(convId)
     return convId
+  },
+
+  closeView(convId) {
+    const { [convId]: _, ...views } = get().views
+    set({ views })
+    if (get().chat?.convId !== convId) get()._leaveConv(convId)
   },
 
   async _loadMembers(convId) {
     const { data } = await supabase.rpc('social_members_of', { conv: convId })
     const chat = get().chat
     if (chat?.convId === convId) set({ chat: { ...chat, members: data || [] } })
+    const v = get().views[convId]
+    if (v) set({ views: { ...get().views, [convId]: { ...v, members: data || [] } } })
   },
 
   async _loadMessages(convId) {
@@ -278,15 +365,16 @@ export const useSocial = create((set, get) => ({
   },
 
   closeChat() {
-    get()._leaveConv()
+    const id = get().chat?.convId
+    if (id && !get().views[id]) get()._leaveConv(id)
     set({ chat: null })
   },
 
-  /** Live channel of the open chat: who is typing, who has read up to where. */
+  /** Live channel of an open chat: who is typing, who has read up to where. */
   _joinConv(convId) {
-    get()._leaveConv()
+    if (convChannels.has(convId) || !channels.length) return
     const uid = get().session.user.id
-    convChannel = supabase
+    const ch = supabase
       .channel(`conv-${convId}`, { config: { broadcast: { self: false } } })
       .on('broadcast', { event: 'typing' }, ({ payload }) => {
         if (!payload?.user || payload.user === uid) return
@@ -297,14 +385,19 @@ export const useSocial = create((set, get) => ({
         if (payload?.user && payload.at) get()._setRead(convId, payload.user, payload.at)
       })
       .subscribe()
+    convChannels.set(convId, ch)
     supabase.from('social_members').select('user_id, last_read_at').eq('conversation_id', convId).then(({ data }) => {
       if (data) set({ reads: { ...get().reads, [convId]: { ...Object.fromEntries(data.map(r => [r.user_id, r.last_read_at])), ...(get().reads[convId] || {}) } } })
     })
   },
 
-  _leaveConv() {
-    if (convChannel) supabase?.removeChannel(convChannel)
-    convChannel = null
+  /** Leaves one chat's live channel, or all of them. */
+  _leaveConv(convId) {
+    for (const [id, ch] of [...convChannels]) {
+      if (convId && id !== convId) continue
+      supabase?.removeChannel(ch)
+      convChannels.delete(id)
+    }
   },
 
   _setRead(convId, user, at) {
@@ -317,18 +410,17 @@ export const useSocial = create((set, get) => ({
     await supabase.rpc('social_mark_read', { conv: convId })
     const list = get().messages[convId]
     const at = list?.length ? list[list.length - 1].created_at : new Date().toISOString()
-    if (convChannel && get().chat?.convId === convId) {
-      convChannel.send({ type: 'broadcast', event: 'read', payload: { user: get().session?.user?.id, at } })
-    }
+    convChannels.get(convId)?.send({ type: 'broadcast', event: 'read', payload: { user: get().session?.user?.id, at } })
     get().loadConvs()
   },
 
   /** Called while typing; tells the others at most every 2.5 s. */
-  typingPing() {
+  typingPing(convId = get().chat?.convId) {
     const now = Date.now()
-    if (!convChannel || now - lastTypingPing < 2500) return
-    lastTypingPing = now
-    convChannel.send({ type: 'broadcast', event: 'typing', payload: { user: get().session?.user?.id, name: get().me?.player_name || '' } })
+    const ch = convChannels.get(convId)
+    if (!ch || now - (lastTypingPing.get(convId) || 0) < 2500) return
+    lastTypingPing.set(convId, now)
+    ch.send({ type: 'broadcast', event: 'typing', payload: { user: get().session?.user?.id, name: get().me?.player_name || '' } })
   },
 
   /** Names of the people typing in a chat right now. */
@@ -337,9 +429,9 @@ export const useSocial = create((set, get) => ({
     return Object.values(t).filter(x => Date.now() - x.at < TYPING_MS).map(x => x.name)
   },
 
-  /** Upload a picture or video into the open chat and post it. */
-  async sendMedia(file) {
-    const chat = get().chat
+  /** Upload a picture or video into a chat (default: the open one) and post it. */
+  async sendMedia(file, convId = get().chat?.convId) {
+    const chat = convId ? { convId } : null
     if (!chat || !file) return
     const uid = get().session.user.id
     let blob = file, w = 0, h = 0, type = 'image'
@@ -366,7 +458,7 @@ export const useSocial = create((set, get) => ({
           ? 'Bilder im Chat sind noch nicht freigeschaltet.'
           : germanError(error))
       }
-      await get().send(type === 'video' ? 'Video' : 'Bild', { kind: 'media', payload: { path, type, w, h, size: blob.size } })
+      await get().send(type === 'video' ? 'Video' : 'Bild', { kind: 'media', payload: { path, type, w, h, size: blob.size } }, convId)
     } finally {
       set({ uploading: false })
     }
@@ -383,8 +475,8 @@ export const useSocial = create((set, get) => ({
   },
 
   /** Invite the chat to play a game together. */
-  async sendInvite(game) {
-    await get().send(`Lust auf ${game.name}?`, { kind: 'invite', payload: { game: game.id, name: game.name, art: game.artUrl || null, accent: game.accent || null } })
+  async sendInvite(game, convId) {
+    await get().send(`Lust auf ${game.name}?`, { kind: 'invite', payload: { game: game.id, name: game.name, art: game.artUrl || null, accent: game.accent || null } }, convId)
   },
 
   async createGroup(name, memberIds) {
@@ -407,8 +499,9 @@ export const useSocial = create((set, get) => ({
     if (error) throw new Error(germanError(error))
     const messages = { ...get().messages }
     delete messages[convId]
-    if (get().chat?.convId === convId) get()._leaveConv()
-    set({ messages, ...(get().chat?.convId === convId ? { chat: null } : {}) })
+    const { [convId]: _, ...views } = get().views
+    get()._leaveConv(convId)
+    set({ messages, views, ...(get().chat?.convId === convId ? { chat: null } : {}) })
     await get().loadConvs()
   },
 
@@ -418,11 +511,12 @@ export const useSocial = create((set, get) => ({
     if (userId === s.session?.user?.id) return s.me?.player_name || 'Du'
     return s.friends.find(f => f.user_id === userId)?.player_name
       || s.chat?.members?.find(m => m.user_id === userId)?.player_name
+      || Object.values(s.views).flatMap(v => v.members || []).find(m => m.user_id === userId)?.player_name
       || null
   },
 
-  async send(body, extra = {}) {
-    const chat = get().chat
+  async send(body, extra = {}, convId = get().chat?.convId) {
+    const chat = convId ? { convId } : null
     const text = body.trim()
     if (!chat || !text) return
     set({ sending: true })
@@ -433,7 +527,7 @@ export const useSocial = create((set, get) => ({
       .single()
     set({ sending: false })
     if (error) throw new Error(germanError(error))
-    lastTypingPing = 0
+    lastTypingPing.delete(chat.convId)
     get()._onMessage(data)
     get().loadConvs()
   },
