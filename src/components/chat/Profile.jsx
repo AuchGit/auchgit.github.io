@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { Check, Copy, ExternalLink, MessageCircle, UserMinus } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Check, Copy, ExternalLink, FlaskConical, MessageCircle, UserMinus } from 'lucide-react'
 import { useSocial } from './useSocial'
 import { useLauncher } from './shim'
 import { api } from './shim'
@@ -40,6 +40,36 @@ function LinkRow({ link }) {
       {link.href ? <ExternalLink size={14} className="text-ink-500 group-hover:text-white" />
         : copied ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} className="text-ink-500 group-hover:text-white" />}
     </button>
+  )
+}
+
+/** Admins only: unlock this person for "In Entwicklung" (beta games). */
+function BetaSwitch({ userId }) {
+  const admin = useSocial(s => s.beta.admin)
+  const [on, setOn] = useState(null) // null = loading
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+  useEffect(() => {
+    if (!admin) return
+    useSocial.getState().betaTesters().then(list => setOn(list.some(t => t.user_id === userId))).catch(e => setError(e.message))
+  }, [admin, userId])
+  if (!admin) return null
+  async function flip() {
+    setBusy(true); setError(null)
+    try { await useSocial.getState().setBetaAccess(userId, !on); setOn(!on) } catch (e) { setError(e.message) } finally { setBusy(false) }
+  }
+  return (
+    <div className="mt-4 rounded-xl border border-amber-300/20 bg-amber-300/[0.05] px-3 py-2.5">
+      <label className="flex cursor-pointer items-center gap-3">
+        <FlaskConical size={16} className="shrink-0 text-amber-300" />
+        <span className="min-w-0 flex-1">
+          <span className="block text-[13px] font-medium text-ink-100">Beta-Zugang</span>
+          <span className="block text-[11.5px] text-ink-400">Sieht und installiert die Spiele unter "In Entwicklung".</span>
+        </span>
+        <input type="checkbox" className="h-4 w-4 accent-amber-400" checked={!!on} disabled={on === null || busy} onChange={flip} />
+      </label>
+      {error && <div className="mt-1.5 text-[11.5px] text-rose-200">{error}</div>}
+    </div>
   )
 }
 
@@ -84,6 +114,8 @@ export function ProfileModal({ userId }) {
       {relation === 'friend' && !person.about && !links.length && (
         <p className="mt-5 text-center text-[12.5px] text-ink-500">Noch nix über sich geschrieben.</p>
       )}
+
+      <BetaSwitch userId={person.user_id} />
 
       {note && <div className="mt-4 rounded-lg bg-rose-500/10 px-3 py-2 text-[12.5px] text-rose-200">{note}</div>}
 

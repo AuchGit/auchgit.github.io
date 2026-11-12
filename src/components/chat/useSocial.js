@@ -79,6 +79,7 @@ export const useSocial = create((set, get) => ({
   game: null,
   typing: {}, // convId -> { userId: { name, at } }
   reads: {},  // convId -> { userId: last read timestamp }
+  beta: { access: false, admin: false }, // "In Entwicklung" unlocked? admin (may unlock others)?
 
   // ------------------------------------------------------------------ lifecycle
   async init() {
@@ -95,7 +96,7 @@ export const useSocial = create((set, get) => ({
 
   _setSession(session) {
     get()._stop()
-    set({ session, me: null, friends: [], convs: [], online: {}, chat: null, messages: {} })
+    set({ session, me: null, friends: [], convs: [], online: {}, chat: null, messages: {}, beta: { access: false, admin: false } })
     if (session) get()._start()
   },
 
@@ -463,6 +464,50 @@ export const useSocial = create((set, get) => ({
   },
   async search(q) {
     const { data, error } = await supabase.rpc('social_search', { q })
+    if (error) throw new Error(germanError(error))
+    return data || []
+  },
+
+  // ------------------------------------------------------------------ beta ("In Entwicklung")
+  /**
+   * Whether this account is unlocked, and the beta games it may see (none
+   * without access; also none while sql/beta.sql isn't set up). Covers come
+   * as signed links that last a day.
+   */
+  async loadBeta() {
+    if (!supabase || !get().session) { set({ beta: { access: false, admin: false } }); return [] }
+    const { data: me, error } = await supabase.rpc('beta_me')
+    const row = !error && Array.isArray(me) ? me[0] : null
+    const beta = { access: !!row?.access, admin: !!row?.admin }
+    set({ beta })
+    if (!beta.access) return []
+    const { data } = await supabase.from('beta_games').select('id, entry, version, notes, signature, setup_path, size, pub_date')
+    const rows = data || []
+    const paths = rows.map(r => r.entry?.artPath).filter(Boolean)
+    if (paths.length) {
+      const { data: urls } = await supabase.storage.from('beta').createSignedUrls(paths, 86400)
+      const byPath = Object.fromEntries((urls || []).filter(u => u.signedUrl).map(u => [u.path, u.signedUrl]))
+      for (const r of rows) r.artUrl = byPath[r.entry?.artPath] || null
+    }
+    return rows
+  },
+
+  /** Short-lived download link for a beta installer (testers only). */
+  async betaUrl(path) {
+    const { data, error } = await supabase.storage.from('beta').createSignedUrl(path, 3600)
+    if (error || !data?.signedUrl) throw new Error('Kein Zugriff auf die Beta. Frag mal nach, ob du noch freigeschaltet bist.')
+    return data.signedUrl
+  },
+
+  /** Admins: unlock or lock someone for "In Entwicklung". */
+  async setBetaAccess(userId, allow) {
+    const { error } = await supabase.rpc('beta_set_access', { target: userId, allow })
+    if (error) throw new Error(germanError(error))
+  },
+
+  /** Admins: everyone who is unlocked. */
+  async betaTesters() {
+    const { data, error } = await supabase.rpc('beta_testers')
     if (error) throw new Error(germanError(error))
     return data || []
   },
