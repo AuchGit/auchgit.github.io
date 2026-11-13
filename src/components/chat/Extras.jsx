@@ -309,11 +309,10 @@ export function AttachButton({ onFile, busy }) {
   )
 }
 
-// ------------------------------------------------------------------ GIF search (GIPHY, KLIPY)
-// Public client keys (VITE_ in the launcher, PUBLIC_ on the website). A source
-// without a key doesn't show; without any the button doesn't either. Two
-// sources because each has gaps: KLIPY (what Discord added after Tenor's API
-// shut down) often finds memes GIPHY doesn't.
+// ------------------------------------------------------------------ GIF search (KLIPY, GIPHY as stand-in)
+// Public client keys (VITE_ in the launcher, PUBLIC_ on the website). KLIPY
+// (what Discord added after Tenor's API shut down, finds more memes) when its
+// key is there; GIPHY only without it; no key, no GIF button.
 const GIPHY_KEY = import.meta.env.VITE_GIPHY_KEY || import.meta.env.PUBLIC_GIPHY_KEY || ''
 const KLIPY_KEY = import.meta.env.VITE_KLIPY_KEY || import.meta.env.PUBLIC_KLIPY_KEY || ''
 
@@ -358,12 +357,10 @@ async function klipy(q) {
     .filter(g => g.preview && g.url)
 }
 
-// Both are searched at once; each keeps its own block (GIPHY doesn't allow mixing
-// its results with other providers' in one grid). KLIPY first: it has more memes.
-const SOURCES = [
-  { id: 'klipy', label: 'KLIPY', key: KLIPY_KEY, search: klipy },
-  { id: 'giphy', label: 'GIPHY', key: GIPHY_KEY, search: giphy },
-].filter(s => s.key)
+// KLIPY when its key is there (more memes); GIPHY only stands in without it.
+const SOURCES = KLIPY_KEY
+  ? [{ id: 'klipy', label: 'KLIPY', key: KLIPY_KEY, search: klipy }]
+  : GIPHY_KEY ? [{ id: 'giphy', label: 'GIPHY', key: GIPHY_KEY, search: giphy }] : []
 
 export function GifButton({ onPick }) {
   const [open, setOpen] = useState(false)
