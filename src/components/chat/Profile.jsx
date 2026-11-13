@@ -130,6 +130,8 @@ export function ProfileModal({ userId }) {
         <p className="mt-5 text-center text-[12.5px] text-ink-500">Noch nix über sich geschrieben.</p>
       )}
 
+      <a href={`/profil/?id=${person.user_id}`} className="mt-4 block rounded-xl py-2 text-center text-[12.5px] text-ink-300 hover:bg-white/[0.05] hover:text-white">Ganzes Profil mit Spielzeit &rarr;</a>
+
       <AdminTools userId={person.user_id} />
 
       {note && <div className="mt-4 rounded-lg bg-rose-500/10 px-3 py-2 text-[12.5px] text-rose-200">{note}</div>}

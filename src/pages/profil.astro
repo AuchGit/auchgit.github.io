@@ -1,0 +1,9 @@
+---
+import Base from '../layouts/Base.astro'
+import ProfilePage from '../components/account/ProfilePage.jsx'
+---
+<Base title="Profil">
+  <section class="mx-auto max-w-5xl px-5 pt-14 sm:px-8">
+    <ProfilePage client:only="react" />
+  </section>
+</Base>

@@ -125,6 +125,7 @@ export default function Account() {
             <div className="mt-3 flex flex-wrap gap-2 text-xs">
               <span className="chip">Launcher</span><span className="chip">Website</span><span className="chip">NerdShelf</span>
               <span className="self-center text-ink-500">ein Account für alles</span>
+              <a href="/profil/" className="self-center font-semibold text-brand-300 hover:text-white">Mein Profil ansehen &rarr;</a>
             </div>
           </div>
         </div>

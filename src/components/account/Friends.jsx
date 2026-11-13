@@ -32,9 +32,9 @@ function errorText(err) {
 function Row({ person, children, sub }) {
   return (
     <li className="flex items-center gap-3 py-3">
-      <Avatar id={person.user_id} name={person.player_name} url={person.avatar_url} size={40} />
+      <a href={`/profil/?id=${person.user_id}`} title="Profil ansehen" className="shrink-0"><Avatar id={person.user_id} name={person.player_name} url={person.avatar_url} size={40} /></a>
       <div className="min-w-0 flex-1">
-        <div className="truncate font-semibold text-white">{person.player_name}</div>
+        <a href={`/profil/?id=${person.user_id}`} className="block truncate font-semibold text-white hover:underline">{person.player_name}</a>
         {sub && <div className="truncate text-xs text-ink-400">{sub}</div>}
       </div>
       <div className="flex shrink-0 gap-2">{children}</div>
