@@ -181,8 +181,14 @@ async function main() {
   const tools = await Promise.all((cfg.tools || []).map(t => project(t, 'tool')))
   const launcher = await project({ id: 'launcher', name: cfg.launcher.name, repo: cfg.launcher.repo, accent: '#8f82ff' }, 'launcher')
 
-  // The launcher's catalog: same file, served from here.
-  writeJson('api/catalog.json', catalog)
+  // The launcher's catalog: same file, served from here, plus the tools the
+  // launcher can install and start (those with a "launcher" block in site.config.json).
+  const launcherTools = (cfg.tools || []).filter(t => t.launcher).map(t => ({
+    id: t.id, kind: 'tool', name: t.name, tagline: t.tagline || '', description: t.description || '',
+    genres: t.genres || [], accent: t.accent || '#8f82ff', repo: t.repo || null, web: t.web || null,
+    icon: t.icon ? t.icon.replace(/^\//, '') : null, ...t.launcher,
+  }))
+  writeJson('api/catalog.json', { ...catalog, tools: launcherTools })
 
   const news = [...games, ...tools, launcher]
     .flatMap(p => p.releases.map(r => ({ project: p.id, kind: p.kind, name: p.name, accent: p.accent, version: r.version, date: r.date, notes: r.notes })))
