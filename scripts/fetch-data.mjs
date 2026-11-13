@@ -65,11 +65,15 @@ function toRelease(r, version, source) {
   const assets = r.assets || []
   const setup = assets.find(a => /-setup\.exe$/i.test(a.name))
   const feed = assets.find(a => a.name === 'latest.json')
+  // Android: 64-bit ARM (nearly every phone), 32-bit as fallback for old ones
+  const apk = assets.find(a => /android-aarch64\.apk$/i.test(a.name)) || assets.find(a => /android-armv7\.apk$/i.test(a.name))
+  const apk32 = assets.find(a => /android-armv7\.apk$/i.test(a.name))
   return {
     version,
     date: r.published_at,
     notes: lines(r.body),
     download: setup ? { url: setup.browser_download_url, size: setup.size, name: setup.name } : null,
+    android: apk ? { url: apk.browser_download_url, size: apk.size, name: apk.name, old: apk32 && apk32 !== apk ? apk32.browser_download_url : null } : null,
     feed: feed ? feed.browser_download_url : null,
     source,
   }

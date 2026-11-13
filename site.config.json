@@ -27,7 +27,8 @@
         "productName": "NerdShelf",
         "exe": "app.exe",
         "identifier": "io.github.auchgit.nerdshelf",
-        "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk1NDRGRDhCNTM0NjAyODUKUldTRkFrWlRpLzFFbFJVK2diRmU5WWxGeXJ1THgzTndhSER5dEJDMERZd0hNSnBTd1p5QVpLcEsK"
+        "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk1NDRGRDhCNTM0NjAyODUKUldTRkFrWlRpLzFFbFJVK2diRmU5WWxGeXJ1THgzTndhSER5dEJDMERZd0hNSnBTd1p5QVpLcEsK",
+        "autoLogin": true
       }
     }
   ]

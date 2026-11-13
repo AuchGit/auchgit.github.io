@@ -33,17 +33,38 @@ const isGame = project.kind === 'game'
             </>
           ) : (
             <>
+              {l?.android && (
+                <a href={l.android.url} class="btn btn-brand hidden" data-only="android" download>
+                  Für Android installieren
+                  <span class="text-xs font-normal opacity-80">APK · {bytes(l.android.size)}</span>
+                </a>
+              )}
               {project.web && (
-                <a href={project.web} class="btn btn-brand" target="_blank" rel="noopener">
+                <a href={project.web} class="btn btn-brand" data-web target="_blank" rel="noopener">
                   Im Browser öffnen
                   <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7M9 7h8v8"/></svg>
                 </a>
               )}
-              <DownloadButton release={l} label="Für Windows" variant={project.web ? 'soft' : 'brand'} />
+              <span data-hide-on="mobile"><DownloadButton release={l} label="Für Windows" variant={project.web ? 'soft' : 'brand'} /></span>
+              {l?.android && (
+                <a href={l.android.url} class="btn btn-soft" data-hide-on="mobile" download>Android-APK</a>
+              )}
             </>
           )}
         </div>
         {isGame && <p class="mt-4 max-w-md text-sm text-ink-400">Games gibt es nur über den Launcher. Einmal installieren, dann hast du alle und bist immer auf dem neuesten Stand.</p>}
+        {!isGame && l?.android && (
+          <p class="mt-4 hidden max-w-md text-sm text-ink-400" data-only="android">
+            Beim ersten Mal fragt Android, ob der Browser Apps installieren darf: einmal erlauben, dann installieren.
+            Updates kommen danach in der App selbst.{l.android.old && <> Altes Handy? <a href={l.android.old} class="underline" download>32-Bit-Version</a>.</>}
+          </p>
+        )}
+        {!isGame && project.web && (
+          <p class="mt-4 hidden max-w-md text-sm text-ink-300" data-only="ios">
+            Auf dem iPhone und iPad: <a href={project.web} class="font-semibold text-white underline">im Browser öffnen</a>, dann in Safari auf
+            <b class="text-white">Teilen</b> und <b class="text-white">Zum Home-Bildschirm</b>. Danach startet {project.name} wie eine App, mit eigenem Symbol.
+          </p>
+        )}
       </div>
     </div>
   </div>
@@ -66,8 +87,21 @@ const isGame = project.kind === 'game'
       <div class="flex justify-between gap-4 pb-3"><dt class="text-ink-400">Version</dt><dd class="font-semibold">{l?.version || '-'}</dd></div>
       <div class="flex justify-between gap-4 py-3"><dt class="text-ink-400">Veröffentlicht</dt><dd>{l ? date(l.date) : '-'}</dd></div>
       <div class="flex justify-between gap-4 py-3"><dt class="text-ink-400">Größe</dt><dd>{l?.download ? bytes(l.download.size) : '-'}</dd></div>
-      <div class="flex justify-between gap-4 py-3"><dt class="text-ink-400">System</dt><dd>Windows 10 / 11{project.web ? ' · Browser' : ''}</dd></div>
+      <div class="flex justify-between gap-4 py-3"><dt class="text-ink-400">System</dt><dd>Windows 10 / 11{l?.android ? ' · Android' : ''}{project.web ? ' · Browser · iPhone (Home-Bildschirm)' : ''}</dd></div>
       <div class="flex justify-between gap-4 pt-3"><dt class="text-ink-400">Updates</dt><dd>automatisch</dd></div>
     </dl>
   </aside>
 </section>
+
+<script>
+  // Phones: the matching install first (APK on Android, home screen on iPhone), no Windows installer.
+  const ua = navigator.userAgent
+  const ios = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+  const android = /Android/.test(ua)
+  const show = android ? 'android' : ios ? 'ios' : null
+  if (show) {
+    document.querySelectorAll(`[data-only="${show}"]`).forEach(el => el.classList.remove('hidden'))
+    document.querySelectorAll('[data-hide-on="mobile"]').forEach(el => el.classList.add('hidden'))
+    if (android) document.querySelectorAll('[data-web]').forEach(el => { el.classList.remove('btn-brand'); el.classList.add('btn-soft') })
+  }
+</script>
