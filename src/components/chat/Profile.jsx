@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Check, Copy, ExternalLink, FlaskConical, MessageCircle, UserMinus } from 'lucide-react'
+import { Check, Copy, ExternalLink, FlaskConical, MessageCircle, ShieldCheck, UserMinus } from 'lucide-react'
 import { useSocial } from './useSocial'
 import { useLauncher } from './shim'
 import { api } from './shim'
@@ -43,32 +43,47 @@ function LinkRow({ link }) {
   )
 }
 
-/** Admins only: unlock this person for "In Entwicklung" (beta games). */
-function BetaSwitch({ userId }) {
+/** Admins only: beta access, admin rights, tidying someone's profile. */
+function AdminTools({ userId }) {
   const admin = useSocial(s => s.beta.admin)
-  const [on, setOn] = useState(null) // null = loading
-  const [busy, setBusy] = useState(false)
+  const me = useSocial(s => s.session?.user?.id)
+  const [info, setInfo] = useState(null)
+  const [busy, setBusy] = useState(null)
+  const [ask, setAsk] = useState(null)
   const [error, setError] = useState(null)
-  useEffect(() => {
-    if (!admin) return
-    useSocial.getState().betaTesters().then(list => setOn(list.some(t => t.user_id === userId))).catch(e => setError(e.message))
-  }, [admin, userId])
-  if (!admin) return null
-  async function flip() {
-    setBusy(true); setError(null)
-    try { await useSocial.getState().setBetaAccess(userId, !on); setOn(!on) } catch (e) { setError(e.message) } finally { setBusy(false) }
+  const load = () => useSocial.getState().adminInfo(userId).then(setInfo).catch(e => setError(e.message))
+  useEffect(() => { if (admin && userId !== me) load() }, [admin, userId]) // eslint-disable-line react-hooks/exhaustive-deps
+  if (!admin || userId === me) return null
+  async function run(key, fn) {
+    setBusy(key); setError(null); setAsk(null)
+    try { await fn(); await load() } catch (e) { setError(e.message) } finally { setBusy(null) }
   }
+  const s = useSocial.getState()
+  const line = 'flex items-center gap-3 py-2'
   return (
-    <div className="mt-4 rounded-xl border border-amber-300/20 bg-amber-300/[0.05] px-3 py-2.5">
-      <label className="flex cursor-pointer items-center gap-3">
+    <div className="mt-4 rounded-xl border border-amber-300/20 bg-amber-300/[0.05] px-3 py-1.5">
+      <div className="flex items-center gap-2 pt-1 text-[12px] font-semibold text-amber-200"><ShieldCheck size={14} /> Admin</div>
+      <label className={`${line} cursor-pointer`}>
         <FlaskConical size={16} className="shrink-0 text-amber-300" />
         <span className="min-w-0 flex-1">
           <span className="block text-[13px] font-medium text-ink-100">Beta-Zugang</span>
           <span className="block text-[11.5px] text-ink-400">Sieht und installiert die Spiele unter "In Entwicklung".</span>
         </span>
-        <input type="checkbox" className="h-4 w-4 accent-amber-400" checked={!!on} disabled={on === null || busy} onChange={flip} />
+        <input type="checkbox" className="h-4 w-4 accent-amber-400" checked={!!info?.beta} disabled={!info || !!busy} onChange={() => run('beta', () => s.setBetaAccess(userId, !info.beta))} />
       </label>
-      {error && <div className="mt-1.5 text-[11.5px] text-rose-200">{error}</div>}
+      <div className={line}>
+        <ShieldCheck size={16} className="shrink-0 text-amber-300" />
+        <span className="min-w-0 flex-1 text-[13px] font-medium text-ink-100">Admin</span>
+        {ask === 'admin'
+          ? <button className="text-[12px] font-semibold text-amber-200 hover:text-white" onClick={() => run('admin', () => s.adminSet(userId, !info.is_admin))}>{info?.is_admin ? 'Wirklich entfernen?' : 'Wirklich Admin machen?'}</button>
+          : <input type="checkbox" className="h-4 w-4 accent-amber-400" checked={!!info?.is_admin} disabled={!info || !!busy} onChange={() => setAsk('admin')} />}
+      </div>
+      <div className={line}>
+        <span className="min-w-0 flex-1 text-[12.5px] text-ink-300">Profilbild / Text entfernen</span>
+        <button className="text-[12px] text-ink-400 hover:text-white" disabled={!!busy} onClick={() => (ask === 'avatar' ? run('avatar', () => s.adminClear(userId, 'avatar')) : setAsk('avatar'))}>{ask === 'avatar' ? 'Wirklich?' : 'Bild'}</button>
+        <button className="text-[12px] text-ink-400 hover:text-white" disabled={!!busy} onClick={() => (ask === 'about' ? run('about', () => s.adminClear(userId, 'about')) : setAsk('about'))}>{ask === 'about' ? 'Wirklich?' : 'Text'}</button>
+      </div>
+      {error && <div className="pb-1.5 text-[11.5px] text-rose-200">{error}</div>}
     </div>
   )
 }
@@ -115,7 +130,7 @@ export function ProfileModal({ userId }) {
         <p className="mt-5 text-center text-[12.5px] text-ink-500">Noch nix über sich geschrieben.</p>
       )}
 
-      <BetaSwitch userId={person.user_id} />
+      <AdminTools userId={person.user_id} />
 
       {note && <div className="mt-4 rounded-lg bg-rose-500/10 px-3 py-2 text-[12.5px] text-rose-200">{note}</div>}
 

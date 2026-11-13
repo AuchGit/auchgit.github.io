@@ -2,6 +2,7 @@
 import Base from '../../layouts/Base.astro'
 import ProjectCard from '../../components/ProjectCard.astro'
 import { games } from '../../lib/site.js'
+import BetaGames from '../../components/account/BetaGames.jsx'
 ---
 <Base title="Spiele" description="Alle Spiele zum Herunterladen, mit Versionen und Neuigkeiten.">
   <section class="mx-auto max-w-7xl px-5 pt-16 sm:px-8">
@@ -9,5 +10,6 @@ import { games } from '../../lib/site.js'
     <div class="mt-10 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
       {games.map((g, i) => <ProjectCard project={g} index={i} />)}
     </div>
+    <BetaGames client:only="react" />
   </section>
 </Base>

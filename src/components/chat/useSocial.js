@@ -586,6 +586,22 @@ export const useSocial = create((set, get) => ({
     return rows
   },
 
+  /** Admins: what they see about someone ({ is_admin, beta, member_since }). */
+  async adminInfo(userId) {
+    const { data, error } = await supabase.rpc('social_admin_info', { target: userId })
+    if (error) throw new Error(/function|does not exist|schema cache/i.test(error.message || '') ? 'Admin-Werkzeuge sind noch nicht freigeschaltet.' : germanError(error))
+    return data?.[0] || null
+  },
+  async adminSet(userId, makeAdmin) {
+    const { error } = await supabase.rpc('social_admin_set', { target: userId, make_admin: makeAdmin })
+    if (error) throw new Error(error.message?.startsWith('Dich selbst') || error.message?.startsWith('Nur') ? error.message : germanError(error))
+  },
+  async adminClear(userId, what) {
+    const { error } = await supabase.rpc('social_admin_clear', { target: userId, what })
+    if (error) throw new Error(germanError(error))
+    await get().loadFriends()
+  },
+
   /** Short-lived download link for a beta installer (testers only). */
   async betaUrl(path) {
     const { data, error } = await supabase.storage.from('beta').createSignedUrl(path, 3600)
