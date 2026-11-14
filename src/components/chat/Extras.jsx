@@ -1,6 +1,7 @@
 // Chat extras: emoji picker, previews for image / GIF / YouTube links, game invites.
 import { useEffect, useRef, useState } from 'react'
-import { Gamepad2, ImagePlus, Loader2, Play, Smile } from 'lucide-react'
+import { createPortal } from 'react-dom'
+import { Gamepad2, ImagePlus, Loader2, Play, Smile, Volume2, VolumeX } from 'lucide-react'
 import { gameState, useLauncher } from './shim'
 import { useSocial } from './useSocial'
 import { api } from './shim'
@@ -149,29 +150,94 @@ export function onlyImage(body) {
   return !/\s/.test(t) && !!imageUrl(t)
 }
 
-/** A YouTube link: plays right here in the chat (click), bigger / in the browser via the small button. */
+// ------------------------------------------------------------------ YouTube
+// Embedded player with our own volume bar (YouTube's slider is tiny in a chat).
+// Steered through the player's own message interface (enablejsapi); the volume
+// you set is kept and applied to every video.
+const YT = 'https://www.youtube-nocookie.com'
+const loadYtVol = () => { try { return { volume: 60, muted: false, ...JSON.parse(localStorage.getItem('auch.ytVolume') || '{}') } } catch { return { volume: 60, muted: false } } }
+
+export function YouTubePlayer({ yt, fill = false, className = '', children }) {
+  const frame = useRef(null)
+  const [vol, setVol] = useState(loadYtVol)
+  const now = useRef(vol)
+  now.current = vol
+  const send = (func, args = []) => { try { frame.current?.contentWindow?.postMessage(JSON.stringify({ event: 'command', func, args }), YT) } catch { /* not there yet */ } }
+  const apply = v => { send('setVolume', [v.volume]); send(v.muted ? 'mute' : 'unMute') }
+  const change = v => {
+    setVol(v)
+    try { localStorage.setItem('auch.ytVolume', JSON.stringify(v)) } catch { /* blocked */ }
+    apply(v)
+  }
+  // the player takes commands once it is ready: say it a few times after loading
+  const loaded = () => { for (const ms of [300, 900, 1800, 3500]) setTimeout(() => apply(now.current), ms) }
+  const shown = vol.muted ? 0 : vol.volume
+  return (
+    <span className={`flex flex-col overflow-hidden bg-black ${className}`}>
+      <iframe ref={frame} onLoad={loaded} title="YouTube" src={`${YT}/embed/${yt}?autoplay=1&rel=0&enablejsapi=1`} referrerPolicy="strict-origin-when-cross-origin"
+        allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowFullScreen className={`w-full border-0 ${fill ? 'min-h-0 flex-1' : 'aspect-video'}`} />
+      <span className="flex items-center gap-2 px-2 py-1.5">
+        <button type="button" onClick={() => change({ ...vol, muted: !vol.muted && vol.volume > 0 ? true : false, volume: vol.volume || 50 })}
+          title={shown ? 'Stumm' : 'Ton an'} className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-white hover:bg-white/10">
+          {shown ? <Volume2 size={15} /> : <VolumeX size={15} className="text-rose-300" />}
+        </button>
+        <input type="range" min={0} max={100} step={1} value={shown} aria-label="Lautstärke"
+          onChange={e => change({ volume: Number(e.target.value), muted: false })}
+          className="h-1 min-w-[60px] flex-1 cursor-pointer accent-[#ff0033]" style={{ maxWidth: 220 }} />
+        <span className="w-8 shrink-0 text-right text-[10.5px] tabular-nums text-white/60">{shown}%</span>
+        {children && <span className="ml-auto flex shrink-0 gap-1">{children}</span>}
+      </span>
+    </span>
+  )
+}
+
+/** The video big, over everything (launcher window / website). Esc or a click next to it closes. */
+function YouTubeBig({ yt, onClose }) {
+  useEffect(() => {
+    const key = e => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', key)
+    return () => window.removeEventListener('keydown', key)
+  }, [onClose])
+  const btn = 'shrink-0 rounded-md bg-white/10 px-2 py-0.5 text-[11px] text-white hover:bg-white/20'
+  return createPortal(
+    <div data-hit className="fixed inset-0 z-[90] grid place-items-center bg-black/85 p-6" onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} className="w-[min(1280px,92vw)] overflow-hidden rounded-xl shadow-lift">
+        <YouTubePlayer yt={yt}>
+          <button type="button" className={btn} onClick={() => api.openLink(`https://www.youtube.com/watch?v=${yt}`).catch(() => {})}>Im Browser</button>
+          <button type="button" className={btn} onClick={onClose}>Schließen</button>
+        </YouTubePlayer>
+      </div>
+    </div>,
+    document.body,
+  )
+}
+
+/** A YouTube link: plays right here in the chat (click), bigger via the small button. */
 function YouTubeCard({ yt, onBig, onFail }) {
   const [play, setPlay] = useState(false)
-  const link = `https://www.youtube.com/watch?v=${yt}`
-  if (play) {
-    return (
-      <span className="mt-1 block w-[320px] max-w-full overflow-hidden rounded-xl bg-black">
-        <iframe title="YouTube" src={`https://www.youtube-nocookie.com/embed/${yt}?autoplay=1&rel=0`} referrerPolicy="strict-origin-when-cross-origin"
-          allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowFullScreen className="aspect-video w-full border-0" />
-        <span className="flex justify-end gap-1 bg-black px-1.5 py-1">
-          <button type="button" onClick={() => onBig(link)} title="Groß ansehen" className="rounded-md bg-white/10 px-2 py-0.5 text-[10.5px] text-white hover:bg-white/20">Groß</button>
-          <button type="button" onClick={() => setPlay(false)} title="Video schließen" className="rounded-md bg-white/10 px-2 py-0.5 text-[10.5px] text-white hover:bg-white/20">Zu</button>
-        </span>
-      </span>
-    )
-  }
+  const [big, setBig] = useState(false)
+  const btn = 'shrink-0 rounded-md bg-white/10 px-2 py-0.5 text-[10.5px] text-white hover:bg-white/20'
+  // "Groß": the overlay's media window if there is one, else the big player here
+  const grow = () => { setPlay(false); if (!onBig || !onBig(`https://www.youtube.com/watch?v=${yt}`)) setBig(true) }
   return (
-    <button type="button" onClick={() => setPlay(true)} title="Abspielen" className="group relative mt-1 block w-60 max-w-full overflow-hidden rounded-xl">
-      <img src={`https://i.ytimg.com/vi/${yt}/hqdefault.jpg`} alt="" loading="lazy" referrerPolicy="no-referrer" onError={onFail} className="aspect-video w-full object-cover" />
-      <span className="absolute inset-0 grid place-items-center bg-black/25 transition group-hover:bg-black/10">
-        <span className="grid h-11 w-11 place-items-center rounded-full bg-[#ff0033] text-white shadow-lg"><Play size={18} fill="currentColor" /></span>
-      </span>
-    </button>
+    <>
+      {play ? (
+        <span className="mt-1 block w-[360px] max-w-full overflow-hidden rounded-xl">
+          <YouTubePlayer yt={yt}>
+            <button type="button" onClick={grow} title="Groß ansehen" className={btn}>Groß</button>
+            <button type="button" onClick={() => setPlay(false)} title="Video schließen" className={btn}>Zu</button>
+          </YouTubePlayer>
+        </span>
+      ) : (
+        <button type="button" onClick={() => setPlay(true)} title="Abspielen" className="group relative mt-1 block w-60 max-w-full overflow-hidden rounded-xl">
+          <img src={`https://i.ytimg.com/vi/${yt}/hqdefault.jpg`} alt="" loading="lazy" referrerPolicy="no-referrer" onError={onFail} className="aspect-video w-full object-cover" />
+          <span className="absolute inset-0 grid place-items-center bg-black/25 transition group-hover:bg-black/10">
+            <span className="grid h-11 w-11 place-items-center rounded-full bg-[#ff0033] text-white shadow-lg"><Play size={18} fill="currentColor" /></span>
+          </span>
+        </button>
+      )}
+      {big && <YouTubeBig yt={yt} onClose={() => setBig(false)} />}
+    </>
   )
 }
 
@@ -188,7 +254,7 @@ export function LinkPreview({ body }) {
       </button>
     )
   }
-  return <YouTubeCard yt={yt} onFail={() => setFailed(true)} onBig={link => api.openLink(link).catch(() => {})} />
+  return <YouTubeCard yt={yt} onFail={() => setFailed(true)} />
 }
 
 // ------------------------------------------------------------------ invites

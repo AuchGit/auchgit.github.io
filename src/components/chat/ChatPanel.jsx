@@ -365,7 +365,7 @@ export default function ChatPanel({ compact = false, convId = null, autoFocus = 
                       <button onClick={() => startReply(m, nameOf(m))} title="Antworten" className="grid h-6 w-6 place-items-center rounded-md text-ink-400 hover:bg-white/[0.08] hover:text-white"><CornerUpLeft size={13} /></button>
                       {(m.kind === 'text' || !m.kind) && <button onClick={() => quote(m, nameOf(m))} title="Zitieren" className="grid h-6 w-6 place-items-center rounded-md text-ink-400 hover:bg-white/[0.08] hover:text-white"><Quote size={12} /></button>}
                     </span>}
-                    <div title={time(m.created_at)} className={`flex max-w-[78%] flex-col ${mine ? 'items-end' : 'items-start'}`}>
+                    <div title={time(m.created_at)} className={`flex ${m.kind === 'text' && /youtu\.?be/i.test(m.body) ? 'max-w-[94%]' : 'max-w-[78%]'} flex-col ${mine ? 'items-end' : 'items-start'}`}>
                       {m.payload?.reply && <ReplyRef r={m.payload.reply} mine={mine} onJump={jump} gone={list.some(x => x.id === m.payload.reply.id && x.kind === 'deleted')} />}
                       {m.kind === 'deleted' ? <div className="rounded-2xl border border-white/[0.07] px-3 py-[6px] text-[12.5px] italic text-ink-500">Nachricht gelöscht</div>
                         : m.kind === 'invite' ? <InviteCard m={m} mine={mine} who={who?.player_name} />
