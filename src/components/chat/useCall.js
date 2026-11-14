@@ -134,8 +134,12 @@ export const useCall = create((set, get) => ({
   videos: {},        // userId -> MediaStream (remote cameras); 'me' -> own camera
   screens: {},       // userId (and 'me') -> { streamId: MediaStream } shared screens / windows / tabs
   myScreens: [],     // [{ id, name }] what you share right now
-  mirror: false,
-  expanded: false,   // website: the call big over the chat
+  mirror: false,     // overlays: a copy of the launcher window's call (they can't open a screen picker)
+  winMode: null,     // launcher: 'full' | 'pip' while the window is like that (components/call/host.js)
+  view: 'dock',      // website: 'dock' | 'big' | 'full' | 'pip'
+  pipBody: null,     // website: the picture-in-picture window's body
+  layout: load('settings', {}).callLayout || 'grid', // 'grid' | 'focus' | 'side'
+  pinned: null,      // the picture you clicked to keep big
   board: [],         // [{ id, name }] your soundboard
   boardLevel: load('settings', {}).callBoardVolume ?? 80, // how loud your soundboard goes out (and you hear it)
   boardPlaying: null,
@@ -210,7 +214,7 @@ export const useCall = create((set, get) => ({
     try { local.micSource?.disconnect() } catch { /* gone */ }
     Object.assign(local, { micRaw: null, micSource: null, progStream: null, progNode: null, camStream: null })
     if (channel) { supabase.removeChannel(channel); channel = null }
-    set({ call: null, members: {}, speaking: {}, videos: {}, screens: {}, myScreens: [], sharing: null, camera: false, joining: false, outgoing: null, expanded: false })
+    set({ call: null, members: {}, speaking: {}, videos: {}, screens: {}, myScreens: [], sharing: null, camera: false, joining: false, outgoing: null, pinned: null })
     useSocial.getState().setCall(null)
   },
 
@@ -508,7 +512,14 @@ export const useCall = create((set, get) => ({
     get()._announce()
   },
 
-  expand(v) { set({ expanded: !!v }) },
+  /** How the pictures are arranged. */
+  setLayout(layout) {
+    setSetting('callLayout', layout)
+    set({ layout })
+  },
+
+  /** Keep a picture big (again: let go). */
+  pin(key) { set({ pinned: get().pinned === key ? null : key }) },
 
   // ------------------------------------------------------------------ soundboard
   /** The line your soundboard goes out on (made once, sent from the start of a call). */

@@ -10,7 +10,7 @@ import ChatPanel from './ChatPanel'
 import { ProfileModal } from './Profile'
 import { GroupModal } from './GroupModal'
 import { useCall } from './useCall'
-import { CallDock, CallPage, CallRing } from './Call'
+import { CallDock, CallModes, CallPage, CallRing } from './Call'
 import { playEvent, playSound } from './sounds'
 
 const notify = (title, body) => {
@@ -63,7 +63,7 @@ export default function ChatApp() {
   const chat = useSocial(s => s.chat)
   const incoming = useSocial(s => s.friends.filter(f => f.relation === 'incoming').length)
   const unread = useSocial(s => s.convs.reduce((n, c) => n + (c.unread || 0), 0))
-  const expanded = useCall(s => s.expanded && !!s.call)
+  const big = useCall(s => s.view === 'big' && !!s.call)
   const [note, setNote] = useState(null)
   useEffect(() => { if (!note) return; const t = setTimeout(() => setNote(null), 5000); return () => clearTimeout(t) }, [note])
 
@@ -117,7 +117,8 @@ export default function ChatApp() {
           <CallDock />
           <div className="fixed right-4 top-20 z-50"><CallRing /></div>
           {note && <div className="fixed bottom-4 right-4 z-50 rounded-xl border border-white/[0.08] bg-ink-900/95 px-4 py-2.5 text-[13px] shadow-lift animate-pop">{note}</div>}
-          {expanded && <div className="fixed inset-x-0 bottom-0 top-16 z-40 bg-ink-950/95 backdrop-blur"><CallPage /></div>}
+          {big && <div className="fixed inset-x-0 bottom-0 top-16 z-40 bg-ink-950/95 backdrop-blur"><CallPage /></div>}
+          <CallModes />
         </>,
         document.body,
       )}

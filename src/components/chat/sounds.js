@@ -1,7 +1,7 @@
 // Notification sounds. A few are built in (made right here with WebAudio, so
 // there are no files and no licences to worry about); your own files live in
 // IndexedDB on this PC. In the desktop app Windows plays them (works while the
-// launcher sits in the tray), in a browser WebAudio does. (Website copy.)
+// launcher sits in the tray), in a browser WebAudio does.
 const isTauri = false // website: WebAudio plays
 const desktop = null
 
