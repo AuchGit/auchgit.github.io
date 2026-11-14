@@ -10,7 +10,7 @@ import ChatPanel from './ChatPanel'
 import { ProfileModal } from './Profile'
 import { GroupModal } from './GroupModal'
 import { useCall } from './useCall'
-import { CallDock, CallModes, CallPage, CallRing } from './Call'
+import { CallDock, CallModes, CallPage, CallRing, LiveBadge } from './Call'
 import { playEvent, playSound } from './sounds'
 
 const notify = (title, body) => {
@@ -116,6 +116,7 @@ export default function ChatApp() {
         <>
           <CallDock />
           <div className="fixed right-4 top-20 z-50"><CallRing /></div>
+          <div className="fixed left-1/2 top-[4.5rem] z-50 -translate-x-1/2"><LiveBadge /></div>
           {note && <div className="fixed bottom-4 right-4 z-50 rounded-xl border border-white/[0.08] bg-ink-900/95 px-4 py-2.5 text-[13px] shadow-lift animate-pop">{note}</div>}
           {big && <div className="fixed inset-x-0 bottom-0 top-16 z-40 bg-ink-950/95 backdrop-blur"><CallPage /></div>}
           <CallModes />

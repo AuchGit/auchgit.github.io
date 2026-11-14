@@ -372,6 +372,42 @@ export function CallControls({ compact = false, onMinimize }) {
   )
 }
 
+/**
+ * While you share something (screen, window, tab, program sound): a small bar
+ * that stays up the whole time. What goes out, each with its own stop, and
+ * "Beenden" for all of it. Lives in the overlay (not in screenshots / streams).
+ */
+export function LiveBadge({ className = '' }) {
+  const call = useCall(s => s.call)
+  const sharing = useCall(s => s.sharing)
+  const myScreens = useCall(s => s.myScreens) || []
+  if (!call || (!sharing && !myScreens.length)) return null
+  const c = useCall.getState()
+  const parts = [
+    ...myScreens.map(x => ({ key: x.id, label: `${x.name}${x.sound ? ' mit Ton' : ''}`, stop: () => c.stopScreen(x.id) })),
+    sharing && { key: 'program', label: `Ton: ${sharing.name}`, stop: () => c.shareProgram(null) },
+  ].filter(Boolean)
+  return (
+    <div data-hit style={{ pointerEvents: 'auto' }}
+      className={`flex max-w-[92vw] items-center gap-2 rounded-full border border-rose-400/40 bg-ink-950/[0.93] py-1 pl-3 pr-1 text-[12px] shadow-lift backdrop-blur animate-pop ${className}`}>
+      <span className="relative flex h-2.5 w-2.5 shrink-0">
+        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-400 opacity-60" />
+        <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-rose-500" />
+      </span>
+      <span className="shrink-0 font-semibold text-rose-200">Live</span>
+      <span className="min-w-0 truncate text-ink-400">in {call.title}</span>
+      {parts.map(p => (
+        <span key={p.key} className="flex shrink-0 items-center gap-1 rounded-full bg-white/[0.07] py-0.5 pl-2 pr-0.5 text-ink-100">
+          {p.label}
+          <button onClick={p.stop} title="Nicht mehr teilen" className="grid h-4 w-4 place-items-center rounded-full text-ink-400 hover:bg-white/10 hover:text-white"><X size={10} /></button>
+        </span>
+      ))}
+      <button onClick={() => { c.stopScreen(); if (sharing) c.shareProgram(null) }}
+        className="shrink-0 rounded-full bg-rose-500 px-3 py-1 text-[11.5px] font-semibold text-white hover:bg-rose-400">Beenden</button>
+    </div>
+  )
+}
+
 /** "X ruft an": join or let it ring out. */
 export function CallRing({ className = '' }) {
   const r = useCall(s => s.ringing)
