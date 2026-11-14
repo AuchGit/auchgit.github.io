@@ -85,6 +85,8 @@ export const useSocial = create((set, get) => ({
   reads: {},  // convId -> { userId: last read timestamp }
   beta: { access: false, admin: false }, // "In Entwicklung" unlocked? admin (may unlock others)?
   views: {},
+  call: null,     // convId of the call you are in (others in that chat see it and can join)
+  callSince: 0,
   watching: [], // chats someone is looking at right now (overlay windows): new messages there count as read
   status: load('status', 'online'),
   idle: false,   // no input for a while: shown as "afk" while the status is "online"
@@ -170,7 +172,15 @@ export const useSocial = create((set, get) => ({
     const { me, game, status, idle } = get()
     if (status === 'invisible' || status === 'offline') { presence.untrack(); return }
     const shown = status === 'online' && idle ? 'afk' : status
-    presence.track({ name: me?.player_name || '', avatar: me?.avatar_url || null, game: game || null, status: shown, since: Date.now() })
+    const { call, callSince } = get()
+    presence.track({ name: me?.player_name || '', avatar: me?.avatar_url || null, game: game || null, status: shown, since: Date.now(), call: call || null, callSince: call ? callSince : 0 })
+  },
+
+  /** The call you are in (useCall): goes into your presence. */
+  setCall(convId) {
+    if (get().call === convId) return
+    set({ call: convId || null, callSince: convId ? Date.now() : 0 })
+    get()._track()
   },
 
   /** Friends coming online or starting a game (not right after connecting, not for a quick reconnect). */

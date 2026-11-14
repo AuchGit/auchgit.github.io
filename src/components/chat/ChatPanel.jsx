@@ -2,6 +2,7 @@ import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { LogOut, Loader2, MoreHorizontal, SendHorizontal, UserPlus, Users, X } from 'lucide-react'
 import { useSocial } from './useSocial'
 import { useLauncher } from './shim'
+import { CallButtons } from './Call'
 import { api } from './shim'
 import { PersonAvatar, STATUS, ago, presenceStatus } from './Person'
 import { AttachButton, EmojiButton, Emote, EmoteSuggest, GifButton, InviteButton, InviteCard, LinkPreview, MediaMessage, emojiOnly, emoteSuggestions, onlyImage } from './Extras'
@@ -188,6 +189,7 @@ export default function ChatPanel({ compact = false, convId = null, autoFocus = 
               <div className="truncate text-sm font-semibold">{chat.title}</div>
               <div className="truncate text-[11.5px] text-ink-400">{status}</div>
             </div>
+            <CallButtons convId={chat.convId} />
             <button className={iconBtn} onClick={() => openModal({ type: 'group', convId: chat.convId })} title="Leute hinzufügen"><UserPlus size={16} /></button>
             <button className={iconBtn} onClick={() => setMenu(m => !m)} title="Mitglieder"><MoreHorizontal size={16} /></button>
           </>
@@ -200,6 +202,7 @@ export default function ChatPanel({ compact = false, convId = null, autoFocus = 
             </span>
           </button>
         )}
+        {!group && <CallButtons convId={chat.convId} />}
         <button className={iconBtn} onClick={closeChat} title="Chat schließen"><X size={16} /></button>
 
         {menu && group && (

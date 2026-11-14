@@ -1,6 +1,7 @@
 // Friends, direct and group chats on the website. Same data and live updates as
 // the launcher's sidebar, so a message sent here shows up there right away.
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Loader2, MessageCircle } from 'lucide-react'
 import { useSocial } from './useSocial'
 import { useLauncher } from './shim'
@@ -8,6 +9,46 @@ import FriendsPanel from './FriendsPanel'
 import ChatPanel from './ChatPanel'
 import { ProfileModal } from './Profile'
 import { GroupModal } from './GroupModal'
+import { useCall } from './useCall'
+import { CallDock, CallPage, CallRing } from './Call'
+import { playEvent, playSound } from './sounds'
+
+const notify = (title, body) => {
+  if (document.visibilityState === 'visible' && document.hasFocus()) return
+  try { if ('Notification' in window && Notification.permission === 'granted') new Notification(title, { body }) } catch { /* not allowed */ }
+}
+
+/** Ringing, ringback, people coming and going, short notes ("geht nicht ran"). */
+function CallSounds({ onNote }) {
+  const ringing = useCall(s => s.ringing)
+  const outgoing = useCall(s => !!s.outgoing)
+  useEffect(() => {
+    useCall.setState({
+      onPeople: () => { if (useSocial.getState().status !== 'dnd') playEvent({}, 'callPeople') },
+      onNotice: text => { onNote(text); notify('Anruf', text) },
+    })
+    // leaving the page ends the call cleanly
+    const bye = () => { if (useCall.getState().call) useCall.getState().leave() }
+    window.addEventListener('pagehide', bye)
+    return () => window.removeEventListener('pagehide', bye)
+  }, [onNote])
+  useEffect(() => {
+    if (!ringing) return
+    notify('Anruf', `${ringing.title ? `${ringing.name} (${ringing.title})` : ringing.name} ruft an`)
+    const ring = () => { if (useSocial.getState().status !== 'dnd') playEvent({}, 'call') }
+    ring()
+    const t = setInterval(ring, 3500)
+    return () => clearInterval(t)
+  }, [ringing?.convId]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!outgoing) return
+    const tone = () => playSound('freiton', 60)
+    const first = setTimeout(tone, 600)
+    const t = setInterval(tone, 4000)
+    return () => { clearTimeout(first); clearInterval(t) }
+  }, [outgoing])
+  return null
+}
 
 function Modals() {
   const modal = useLauncher(s => s.modal)
@@ -22,6 +63,9 @@ export default function ChatApp() {
   const chat = useSocial(s => s.chat)
   const incoming = useSocial(s => s.friends.filter(f => f.relation === 'incoming').length)
   const unread = useSocial(s => s.convs.reduce((n, c) => n + (c.unread || 0), 0))
+  const expanded = useCall(s => s.expanded && !!s.call)
+  const [note, setNote] = useState(null)
+  useEffect(() => { if (!note) return; const t = setTimeout(() => setNote(null), 5000); return () => clearTimeout(t) }, [note])
 
   useEffect(() => { useSocial.getState().init() }, [])
 
@@ -66,6 +110,17 @@ export default function ChatApp() {
         )}
       </section>
       <Modals />
+      <CallSounds onNote={setNote} />
+      {/* outside the card: its backdrop blur would hold fixed things inside it */}
+      {createPortal(
+        <>
+          <CallDock />
+          <div className="fixed right-4 top-20 z-50"><CallRing /></div>
+          {note && <div className="fixed bottom-4 right-4 z-50 rounded-xl border border-white/[0.08] bg-ink-900/95 px-4 py-2.5 text-[13px] shadow-lift animate-pop">{note}</div>}
+          {expanded && <div className="fixed inset-x-0 bottom-0 top-16 z-40 bg-ink-950/95 backdrop-blur"><CallPage /></div>}
+        </>,
+        document.body,
+      )}
     </div>
   )
 }
