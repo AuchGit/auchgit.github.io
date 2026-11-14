@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { LogOut, Loader2, MoreHorizontal, SendHorizontal, UserPlus, Users, X } from 'lucide-react'
+import { CornerUpLeft, LogOut, Loader2, MoreHorizontal, Quote, SendHorizontal, UserPlus, Users, X } from 'lucide-react'
 import { useSocial } from './useSocial'
 import { useLauncher } from './shim'
 import { CallButtons, CallInChat } from './Call'
@@ -7,6 +7,8 @@ import { api } from './shim'
 import { PersonAvatar, STATUS, ago, presenceStatus } from './Person'
 import { AttachButton, EmojiButton, Emote, EmoteSuggest, GifButton, InviteButton, InviteCard, LinkPreview, MediaMessage, emojiOnly, emoteSuggestions, onlyImage } from './Extras'
 import { emote, emotesOnly, withEmotes } from './emotes'
+const load = (k, d) => { try { const r = localStorage.getItem('auch.' + k); return r == null ? d : JSON.parse(r) } catch { return d } }
+const save = (k, v) => { try { localStorage.setItem('auch.' + k, JSON.stringify(v)) } catch { /* blocked */ } }
 
 const URL_RE = /(https?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]])/gi
 const GROUP_GAP = 5 * 60 * 1000
@@ -17,6 +19,45 @@ function Text({ body }) {
   return parts.map((p, i) => (i % 2 === 1
     ? <a key={i} href={p} onClick={e => { e.preventDefault(); api.openLink(p).catch(() => {}) }} className="underline decoration-white/40 underline-offset-2 hover:decoration-white break-all">{p}</a>
     : <Fragment key={i}>{withEmotes(p).map((x, j) => (typeof x === 'string' ? <Fragment key={j}>{x}</Fragment> : <Emote key={j} e={x} />))}</Fragment>))
+}
+
+/** Text where lines starting with ">" are a quote block. */
+function Body({ body }) {
+  const blocks = []
+  for (const line of body.split('\n')) {
+    const q = /^>/.test(line)
+    const text = q ? line.replace(/^>\s?/, '') : line
+    const last = blocks[blocks.length - 1]
+    if (last && last.q === q) last.lines.push(text)
+    else blocks.push({ q, lines: [text] })
+  }
+  if (!blocks.some(b => b.q)) return <Text body={body} />
+  return blocks.map((b, i) => (b.q
+    ? <div key={i} className="my-0.5 border-l-2 border-white/40 pl-2 text-[12.5px] opacity-80"><Text body={b.lines.join('\n')} /></div>
+    : <div key={i}><Text body={b.lines.join('\n')} /></div>))
+}
+
+// Replies: the answered message travels along with yours (payload.reply) and shows above it.
+const excerpt = m => (m.kind === 'media' ? (m.payload?.type === 'video' ? 'Video' : 'Bild')
+  : m.kind === 'invite' ? 'Einladung'
+  : String(m.body || '').split('\n').filter(l => !/^>/.test(l)).join(' ').replace(/\s+/g, ' ').trim().slice(0, 140))
+const quoteOf = (m, name) => {
+  const lines = String(m.body || '').split('\n').filter(l => !/^>/.test(l)).join('\n').trim().slice(0, 400).split('\n')
+  if (name) lines[0] = `${name}: ${lines[0]}`
+  return lines.map(l => '> ' + l).join('\n')
+}
+const replies = {} // convId -> the message you are answering (survives hiding the overlay)
+
+/** The message this one answers; a click scrolls there. */
+function ReplyRef({ r, mine, onJump }) {
+  return (
+    <button onClick={() => onJump(r.id)} title="Zur Nachricht"
+      className={`mb-0.5 flex max-w-full items-center gap-1.5 rounded-lg border-l-2 border-brand-400/70 bg-white/[0.04] px-2 py-1 text-left text-[11.5px] text-ink-300 hover:bg-white/[0.08] ${mine ? 'self-end' : 'self-start'}`}>
+      <CornerUpLeft size={11} className="shrink-0 text-ink-500" />
+      <b className="shrink-0 font-semibold text-ink-200">{r.name || 'Jemand'}</b>
+      <span className="truncate">{r.body}</span>
+    </button>
+  )
 }
 
 /** A message of only emotes: big, without a bubble. */
@@ -67,6 +108,23 @@ const iconBtn = 'grid h-8 w-8 shrink-0 place-items-center rounded-lg text-ink-30
  * overlay windows. `compact`: no header, the tab above shows who it is.
  * `tools`: extra buttons next to the message field, gets { upload, setError }.
  */
+// Unsent text per chat: stays when you switch chats, hide the overlay (hotkey)
+// or restart. Shared through storage with the other windows (overlay).
+const drafts = {}
+const draftTimers = {}
+const draftOf = convId => (convId ? drafts[convId] ?? load('chatDrafts', {})[convId] ?? '' : '')
+function keepDraft(convId, text) {
+  if (!convId) return
+  drafts[convId] = text
+  clearTimeout(draftTimers[convId])
+  draftTimers[convId] = setTimeout(() => {
+    const all = load('chatDrafts', {})
+    if (text) all[convId] = text
+    else delete all[convId]
+    save('chatDrafts', all)
+  }, 250)
+}
+
 export default function ChatPanel({ compact = false, convId = null, autoFocus = true, tools = null }) {
   const chat = useSocial(s => (convId ? s.views[convId] : s.chat))
   const id = chat?.convId
@@ -82,8 +140,11 @@ export default function ChatPanel({ compact = false, convId = null, autoFocus = 
   const { send, closeChat, leaveGroup } = useSocial.getState()
   const openModal = useLauncher(s => s.openModal)
 
-  const [text, setText] = useState('')
+  const [text, setTextRaw] = useState(() => draftOf(chat?.convId))
+  const setText = v => { setTextRaw(v); keepDraft(chat?.convId, v) }
   const [caret, setCaret] = useState(0)
+  const [reply, setReplyRaw] = useState(() => replies[chat?.convId] || null)
+  const setReply = r => { setReplyRaw(r); if (chat?.convId) { if (r) replies[chat.convId] = r; else delete replies[chat.convId] } }
   const [error, setError] = useState(null)
   const [menu, setMenu] = useState(false)
   const [leaving, setLeaving] = useState(false)
@@ -95,7 +156,7 @@ export default function ChatPanel({ compact = false, convId = null, autoFocus = 
   const friend = chat?.friend
   const online = friend ? onlineAll[friend.user_id] : null
 
-  useEffect(() => { setText(''); setCaret(0); setError(null); setMenu(false); setLeaving(false); stick.current = true; if (autoFocus) input.current?.focus() }, [chat?.convId]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { const d = draftOf(chat?.convId); setTextRaw(d); setCaret(d.length); setReplyRaw(replies[chat?.convId] || null); setError(null); setMenu(false); setLeaving(false); stick.current = true; if (autoFocus) requestAnimationFrame(() => { const el = input.current; if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length) } }) }, [chat?.convId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Stay at the bottom while new messages come in, unless the user scrolled up.
   useLayoutEffect(() => {
@@ -122,10 +183,33 @@ export default function ChatPanel({ compact = false, convId = null, autoFocus = 
   async function submit() {
     if (!text.trim() || sending) return
     const body = text
+    const re = reply
     setText('')
+    setReply(null)
     setError(null)
     stick.current = true
-    try { await send(body, {}, chat.convId) } catch (e) { setError(e.message); setText(body) }
+    try { await send(body, re ? { payload: { reply: re } } : {}, chat.convId) } catch (e) { setError(e.message); setText(body); setReply(re) }
+  }
+
+  const focusEnd = () => requestAnimationFrame(() => { const el = input.current; if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length) } })
+  const nameOf = m => (m.sender === uid ? useSocial.getState().me?.player_name : person(m.sender)?.player_name) || ''
+  /** Answer a message: it shows above yours. */
+  function startReply(m, name) {
+    setReply({ id: m.id, sender: m.sender, name: name || '', body: excerpt(m), kind: m.kind || 'text' })
+    focusEnd()
+  }
+  /** Quote a message: its text goes into the field as "> ...". */
+  function quote(m, name) {
+    const q = quoteOf(m, name)
+    setText((text.trim() ? text.replace(/\s*$/, '\n') : '') + q + '\n')
+    focusEnd()
+  }
+  /** Scroll to a message and let it light up for a moment. */
+  function jump(id) {
+    const el = scroller.current?.querySelector(`[data-mid="${id}"]`)
+    if (!el) return
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    el.animate?.([{ backgroundColor: 'rgba(143,130,255,0.28)' }, { backgroundColor: 'rgba(143,130,255,0)' }], { duration: 1400, easing: 'ease-out' })
   }
 
   async function upload(file) {
@@ -260,11 +344,16 @@ export default function ChatPanel({ compact = false, convId = null, autoFocus = 
               ) : (
                 <>
                   {group && !mine && first && <div className="mt-2.5 pl-8 text-[11px] font-semibold text-ink-400">{who.player_name}</div>}
-                  <div className={`flex items-end gap-2 ${mine ? 'justify-end' : ''} ${first && !(group && !mine) ? 'mt-2.5' : 'mt-0.5'}`}>
+                  <div data-mid={m.id} className={`group/msg flex items-end gap-2 rounded-lg ${mine ? 'justify-end' : ''} ${first && !(group && !mine) ? 'mt-2.5' : 'mt-0.5'}`}>
                     {!mine && (last
                       ? <button onClick={() => profile(m.sender)} className="shrink-0 rounded-full" title={who.player_name}><PersonAvatar id={m.sender} name={who.player_name} url={who.avatar_url} size={24} /></button>
                       : <span className="w-6 shrink-0" />)}
+                    <span className={`mb-1 flex shrink-0 gap-0.5 opacity-0 transition group-hover/msg:opacity-100 ${mine ? '' : 'order-last'}`}>
+                      <button onClick={() => startReply(m, nameOf(m))} title="Antworten" className="grid h-6 w-6 place-items-center rounded-md text-ink-400 hover:bg-white/[0.08] hover:text-white"><CornerUpLeft size={13} /></button>
+                      {(m.kind === 'text' || !m.kind) && <button onClick={() => quote(m, nameOf(m))} title="Zitieren" className="grid h-6 w-6 place-items-center rounded-md text-ink-400 hover:bg-white/[0.08] hover:text-white"><Quote size={12} /></button>}
+                    </span>
                     <div title={time(m.created_at)} className={`flex max-w-[78%] flex-col ${mine ? 'items-end' : 'items-start'}`}>
+                      {m.payload?.reply && <ReplyRef r={m.payload.reply} mine={mine} onJump={jump} />}
                       {m.kind === 'invite' ? <InviteCard m={m} mine={mine} who={who?.player_name} />
                         : m.kind === 'media' ? <MediaMessage m={m} />
                         : emojiOnly(m.body) ? <div className={`leading-tight ${emojiOnly(m.body) === 1 ? 'text-[44px]' : 'text-[34px]'}`}>{m.body}</div>
@@ -275,7 +364,7 @@ export default function ChatPanel({ compact = false, convId = null, autoFocus = 
                             <div className={`whitespace-pre-wrap break-words rounded-2xl px-3 py-[7px] text-[13px] leading-snug ${mine
                               ? 'bg-gradient-to-br from-brand-500 to-[#8a4cf0] text-white rounded-br-md'
                               : 'bg-white/[0.07] text-ink-100 rounded-bl-md'}`}>
-                              <Text body={m.body} />
+                              <Body body={m.body} />
                             </div>
                             <LinkPreview body={m.body} />
                           </>
@@ -305,6 +394,13 @@ export default function ChatPanel({ compact = false, convId = null, autoFocus = 
           </div>
         )}
         {error && <div className="mb-2 rounded-lg bg-rose-500/10 px-3 py-1.5 text-[12px] text-rose-200">{error}</div>}
+        {reply && (
+          <div className="mb-2 flex items-center gap-2 rounded-lg border-l-2 border-brand-400 bg-white/[0.05] px-2.5 py-1.5 text-[12px]">
+            <CornerUpLeft size={13} className="shrink-0 text-brand-300" />
+            <span className="min-w-0 flex-1 truncate text-ink-300">Antwort an <b className="text-ink-100">{reply.name || 'Jemand'}</b>: {reply.body}</span>
+            <button onClick={() => setReply(null)} title="Doch nicht antworten" className="grid h-5 w-5 shrink-0 place-items-center rounded text-ink-400 hover:text-white"><X size={13} /></button>
+          </div>
+        )}
         {suggest.show && <EmoteSuggest list={suggest.list} active={0} onPick={complete} />}
         <div className="flex items-end gap-1 rounded-xl border border-white/10 bg-white/[0.05] py-1.5 pl-1.5 pr-1.5 focus-within:border-brand-400">
           <InviteButton onError={setError} convId={chat.convId} />
