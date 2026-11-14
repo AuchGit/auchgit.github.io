@@ -9,7 +9,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   AppWindow, AudioLines, Check, ChevronDown, Columns2, Expand, Eye, EyeOff, GripHorizontal, HeadphoneOff, Headphones, LayoutGrid, LayoutTemplate,
-  Loader2, Maximize2, Mic, MicOff, Minus, MonitorUp, Music2, PanelBottom, Phone, PhoneOff, PictureInPicture2, Pin, Plus, Rows2, Shrink,
+  Layers, Loader2, Maximize2, MessageSquare, Mic, MicOff, Minus, MonitorUp, Music2, PanelBottom, Phone, PhoneOff, PictureInPicture2, Pin, Plus, Rows2, Shrink,
   SlidersHorizontal, Square, Upload, Video, VideoOff, Volume2, X,
 } from 'lucide-react'
 import { SCREEN_MAX, useCall } from './useCall'
@@ -234,9 +234,11 @@ function Member({ id, m, speaking, compact }) {
 /** Where the call shows and how the pictures are arranged. */
 const VIEWS = [
   ['dock', 'In der Ecke', PanelBottom],
+  ['chat', 'Im Chat', MessageSquare],
   ['big', 'Groß', AppWindow],
   ['full', 'Vollbild', Expand],
   ['pip', 'Bild im Bild', PictureInPicture2],
+  ['overlay', 'Im Overlay (über Spielen)', Layers],
 ]
 const LAYOUTS = [
   ['grid', 'Raster', LayoutGrid],
@@ -267,6 +269,27 @@ export function ViewMenu({ onClose }) {
     </div>
   )
 }
+
+/** Small button that opens the view menu (not in the overlays: they only mirror the call). */
+export function ViewButton() {
+  const mirror = useCall(s => s.mirror)
+  const [open, setOpen] = useState(false)
+  if (mirror) return null
+  return (
+    <span className="relative">
+      <button onClick={() => setOpen(v => !v)} title="Ansicht: Ecke, Chat, groß, Vollbild, Bild im Bild, Overlay"
+        className={`grid h-6 w-6 place-items-center rounded-md hover:bg-white/[0.07] hover:text-white ${open ? 'bg-white/[0.08] text-white' : 'text-ink-400'}`}>
+        <LayoutTemplate size={13} />
+      </button>
+      {open && <div className="absolute right-0 top-full z-40 mt-1"><ViewMenu onClose={() => setOpen(false)} /></div>}
+    </span>
+  )
+}
+
+/** Something to look at: a camera or a shared screen (yours counts when you see it). */
+export const usePictures = () => useCall(s => Object.keys(s.videos || {}).some(k => k !== 'me')
+  || Object.values(s.screens || {}).some(x => Object.keys(x || {}).length > 0)
+  || (s.camera && s.selfView && !!s.videos?.me))
 
 /** The call buttons. `mini`: only the most needed ones (picture in picture). */
 export function ControlBar({ compact = false, mini = false, floating = false }) {
@@ -313,9 +336,7 @@ export function CallControls({ compact = false, onMinimize }) {
   const speaking = useCall(s => s.speaking)
   const { muted, deaf, sharing, error, joining, outgoing } = useCall()
   const myScreens = useCall(s => s.myScreens) || []
-  const mirror = useCall(s => s.mirror)
   const me = useSocial(s => s.me)
-  const [views, setViews] = useState(false)
   useTick(!!call)
   if (!call) return null
   const ids = Object.keys(members)
@@ -329,8 +350,7 @@ export function CallControls({ compact = false, onMinimize }) {
           ? <span className="flex items-center gap-1 text-[11px] text-emerald-300"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" /> klingelt</span>
           : <span className="text-[11px] tabular-nums text-ink-400">{since(call.since)}</span>}
         {onMinimize && <button className={head} title="Kleiner" onClick={onMinimize}><Minus size={13} /></button>}
-        {!mirror && <button className={`${head} ${views ? 'bg-white/[0.08] text-white' : ''}`} title="Ansicht: Ecke, groß, Vollbild, Bild im Bild" onClick={() => setViews(v => !v)}><LayoutTemplate size={13} /></button>}
-        {views && <div className="absolute right-2 top-full z-40 mt-1"><ViewMenu onClose={() => setViews(false)} /></div>}
+        <ViewButton />
       </div>
       <ul className="min-h-0 flex-1 overflow-y-auto px-1.5 py-1">
         <li className="flex items-center gap-2.5 px-2 py-1.5">
@@ -477,7 +497,7 @@ export function CallDock() {
   const members = useCall(s => s.members)
   const outgoing = useCall(s => !!s.outgoing)
   const muted = useCall(s => s.muted)
-  const pictures = useCall(s => Object.keys(s.videos).some(k => k !== 'me') || Object.values(s.screens).some(x => Object.keys(x || {}).length) || (s.camera && s.selfView))
+  const pictures = usePictures()
   const [mini, setMini] = useState(() => load('callDockMini', false))
   const [pos, setPos] = useState(() => load('callDockPos', { x: 16, y: 16 })) // from the bottom left
   useTick(!!call && mini)
@@ -520,6 +540,53 @@ export function CallDock() {
       <div className="h-[300px]">
         <CallControls compact onMinimize={() => small(true)} />
       </div>
+    </div>
+  )
+}
+
+/** The call on top of its chat ("Im Chat"): who is in it, pictures (drag the height), buttons. */
+export function CallInChat({ convId }) {
+  const view = useCallView()
+  const call = useCall(s => s.call)
+  const layout = useCall(s => s.layout)
+  const members = useCall(s => s.members)
+  const speaking = useCall(s => s.speaking)
+  const outgoing = useCall(s => !!s.outgoing)
+  const error = useCall(s => s.error)
+  const pictures = usePictures()
+  const [h, setH] = useState(() => load('callChatHeight', 210))
+  useTick(!!call && view === 'chat')
+  if (!call || view !== 'chat' || call.convId !== convId) return null
+  const drag = e => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    const sy = e.clientY, start = h
+    let next = start
+    const move = ev => { next = Math.max(110, Math.min(560, start + ev.clientY - sy)); setH(next) }
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); save('callChatHeight', next) }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
+  const ids = Object.keys(members)
+  return (
+    <div className="shrink-0 border-b border-white/[0.06] bg-black/20">
+      <div className="flex items-center gap-2 px-3 pt-2">
+        <Phone size={13} className="shrink-0 text-emerald-400" />
+        <span className="text-[12px] font-semibold">Anruf</span>
+        <span className="text-[11px] tabular-nums text-ink-400">{outgoing ? 'klingelt' : since(call.since)}</span>
+        <span className="flex min-w-0 flex-1 items-center -space-x-1.5 overflow-hidden pl-1.5">
+          {ids.map(id => (
+            <span key={id} title={members[id].name} className={`rounded-full ring-2 ${speaking[id] ? 'ring-emerald-400' : 'ring-ink-900'}`}>
+              <PersonAvatar id={id} name={members[id].name || '?'} url={members[id].avatar} size={22} />
+            </span>
+          ))}
+        </span>
+        <ViewButton />
+      </div>
+      {pictures && <div style={{ height: h }} className="px-2 pt-2"><Stage layout={layout} small /></div>}
+      {pictures && <div onPointerDown={drag} title="Höhe ziehen" className="flex h-3 cursor-ns-resize items-center justify-center"><span className="h-1 w-12 rounded-full bg-white/10" /></div>}
+      {error && <div className="mx-3 mt-1 rounded-lg bg-rose-500/10 px-2.5 py-1.5 text-[11.5px] text-rose-200">{error}</div>}
+      <ControlBar compact />
     </div>
   )
 }

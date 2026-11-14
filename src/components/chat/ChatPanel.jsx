@@ -2,7 +2,7 @@ import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { LogOut, Loader2, MoreHorizontal, SendHorizontal, UserPlus, Users, X } from 'lucide-react'
 import { useSocial } from './useSocial'
 import { useLauncher } from './shim'
-import { CallButtons } from './Call'
+import { CallButtons, CallInChat } from './Call'
 import { api } from './shim'
 import { PersonAvatar, STATUS, ago, presenceStatus } from './Person'
 import { AttachButton, EmojiButton, Emote, EmoteSuggest, GifButton, InviteButton, InviteCard, LinkPreview, MediaMessage, emojiOnly, emoteSuggestions, onlyImage } from './Extras'
@@ -231,6 +231,7 @@ export default function ChatPanel({ compact = false, convId = null, autoFocus = 
           </div>
         )}
       </div>}
+      {!compact && <CallInChat convId={id} />}
 
       <div ref={scroller} onScroll={e => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60 }}
         onLoadCapture={() => { const el = scroller.current; if (el && stick.current) el.scrollTop = el.scrollHeight }}

@@ -136,6 +136,7 @@ export const useCall = create((set, get) => ({
   myScreens: [],     // [{ id, name }] what you share right now
   mirror: false,     // overlays: a copy of the launcher window's call (they can't open a screen picker)
   winMode: null,     // launcher: 'full' | 'pip' while the window is like that (components/call/host.js)
+  spot: null,        // launcher: 'chat' | 'overlay' when the call shows there
   view: 'dock',      // website: 'dock' | 'big' | 'full' | 'pip'
   pipBody: null,     // website: the picture-in-picture window's body
   layout: load('settings', {}).callLayout || 'grid', // 'grid' | 'focus' | 'side'

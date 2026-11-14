@@ -1,18 +1,45 @@
 // Where the call shows on the website (the launcher has its own host.js with
 // the same exports):
 //   dock  the panel in a corner (drag it where you like)
+//   chat  on top of its chat (chat closed: back in the corner)
 //   big   the call over the chat
 //   full  the browser full screen
 //   pip   picture in picture: a small window that stays on top (Chrome, Edge)
 import { createPortal } from 'react-dom'
 import { useCall } from './useCall'
+import { useSocial } from './useSocial'
 
 export const CAN = {
   pip: typeof window !== 'undefined' && 'documentPictureInPicture' in window,
   full: typeof document !== 'undefined' && !!document.fullscreenEnabled,
+  chat: true,
+  overlay: false, // the desktop app's overlay
 }
 
-export const useCallView = () => useCall(s => s.view || 'dock')
+const chatShown = (s, conv) => !!conv && s.chat?.convId === conv
+
+export function useCallView() {
+  const view = useCall(s => s.view || 'dock')
+  const conv = useCall(s => s.call?.convId)
+  const shown = useSocial(s => chatShown(s, conv))
+  return view === 'chat' && !shown ? 'dock' : view
+}
+
+function current() {
+  const c = useCall.getState()
+  const v = c.view || 'dock'
+  return v === 'chat' && !chatShown(useSocial.getState(), c.call?.convId) ? 'dock' : v
+}
+
+/** Opens the chat a call belongs to (direct or group). */
+async function openCallChat(convId) {
+  const s = useSocial.getState()
+  const c = s.convs.find(x => x.id === convId)
+  if (!c) return
+  if (c.kind === 'group') return s.openGroup(c)
+  const f = s.friends.find(x => x.user_id === c.other_id)
+  if (f) return s.openChat(f)
+}
 
 let before = 'dock' // where full screen / picture in picture go back to
 let pipWin = null
@@ -33,7 +60,7 @@ function copyStyles(doc) {
 
 // Called right from a click: full screen and picture in picture need that.
 export async function setCallView(next) {
-  const cur = useCall.getState().view || 'dock'
+  const cur = current()
   if (next === cur) return
   if (next === 'full') {
     try { await document.documentElement.requestFullscreen() } catch { useCall.setState({ error: 'Vollbild geht hier nicht.' }); return }
@@ -55,8 +82,9 @@ export async function setCallView(next) {
   } else if (cur === 'pip') {
     closePip()
   }
-  if (cur === 'dock' || cur === 'big') before = cur
+  if (cur === 'dock' || cur === 'big' || cur === 'chat') before = cur
   useCall.setState({ view: next, ...(next === 'pip' ? {} : { pipBody: null }) })
+  if (next === 'chat') await openCallChat(useCall.getState().call?.convId)
 }
 
 /** Out of full screen / picture in picture, back to where you were. */
