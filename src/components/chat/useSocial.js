@@ -136,6 +136,7 @@ export const useSocial = create((set, get) => ({
       .channel(`social-db-${uid}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'social_friendships' }, p => get()._onFriendship(p))
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'social_messages' }, p => get()._onMessage(p.new))
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'social_messages' }, p => get()._onMessageUpdate(p.new))
       .subscribe()
     channels.push(db)
 
@@ -263,6 +264,23 @@ export const useSocial = create((set, get) => ({
         if (backgrounded() && get().notify) desktop.notify(`${who()} hat angenommen`, 'Ihr seid jetzt befreundet')
       }
     })
+  },
+
+  /** One of your messages away: it stays as "Nachricht gelöscht" (sql/social-delete.sql). */
+  async deleteMessage(m) {
+    if (!supabase || !m?.id) return
+    const { error } = await supabase.rpc('social_delete_message', { mid: m.id })
+    if (error) throw new Error(/function|schema cache|does not exist/i.test(error.message || '') ? 'Löschen ist noch nicht freigeschaltet.' : germanError(error))
+    if (m.kind === 'media' && m.payload?.path) supabase.storage.from('chat').remove([m.payload.path]).catch(() => {})
+    get()._onMessageUpdate({ ...m, kind: 'deleted', body: 'Nachricht gelöscht', payload: null })
+    get().loadConvs()
+  },
+
+  /** A message changed (deleted): swap it where it is shown. */
+  _onMessageUpdate(m) {
+    const list = m?.conversation_id && get().messages[m.conversation_id]
+    if (!list) return
+    set({ messages: { ...get().messages, [m.conversation_id]: list.map(x => (x.id === m.id ? { ...x, ...m } : x)) } })
   },
 
   _onMessage(m) {

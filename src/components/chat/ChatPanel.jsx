@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { CornerUpLeft, LogOut, Loader2, MoreHorizontal, Quote, SendHorizontal, UserPlus, Users, X } from 'lucide-react'
+import { CornerUpLeft, LogOut, Loader2, MoreHorizontal, Quote, SendHorizontal, Trash2, UserPlus, Users, X } from 'lucide-react'
 import { useSocial } from './useSocial'
 import { useLauncher } from './shim'
 import { CallButtons, CallInChat } from './Call'
@@ -49,13 +49,13 @@ const quoteOf = (m, name) => {
 const replies = {} // convId -> the message you are answering (survives hiding the overlay)
 
 /** The message this one answers; a click scrolls there. */
-function ReplyRef({ r, mine, onJump }) {
+function ReplyRef({ r, mine, onJump, gone }) {
   return (
     <button onClick={() => onJump(r.id)} title="Zur Nachricht"
       className={`mb-0.5 flex max-w-full items-center gap-1.5 rounded-lg border-l-2 border-brand-400/70 bg-white/[0.04] px-2 py-1 text-left text-[11.5px] text-ink-300 hover:bg-white/[0.08] ${mine ? 'self-end' : 'self-start'}`}>
       <CornerUpLeft size={11} className="shrink-0 text-ink-500" />
       <b className="shrink-0 font-semibold text-ink-200">{r.name || 'Jemand'}</b>
-      <span className="truncate">{r.body}</span>
+      <span className={`truncate ${gone ? 'italic text-ink-500' : ''}`}>{gone ? 'Nachricht gelöscht' : r.body}</span>
     </button>
   )
 }
@@ -143,6 +143,7 @@ export default function ChatPanel({ compact = false, convId = null, autoFocus = 
   const [text, setTextRaw] = useState(() => draftOf(chat?.convId))
   const setText = v => { setTextRaw(v); keepDraft(chat?.convId, v) }
   const [caret, setCaret] = useState(0)
+  const [sure, setSure] = useState(null) // message id waiting for the second click on the bin
   const [reply, setReplyRaw] = useState(() => replies[chat?.convId] || null)
   const setReply = r => { setReplyRaw(r); if (chat?.convId) { if (r) replies[chat.convId] = r; else delete replies[chat.convId] } }
   const [error, setError] = useState(null)
@@ -203,6 +204,12 @@ export default function ChatPanel({ compact = false, convId = null, autoFocus = 
     const q = quoteOf(m, name)
     setText((text.trim() ? text.replace(/\s*$/, '\n') : '') + q + '\n')
     focusEnd()
+  }
+  /** Delete one of your messages; the bin asks once more (second click within 3 s). */
+  async function remove(m, ask = true) {
+    if (ask && sure !== m.id) { setSure(m.id); setTimeout(() => setSure(x => (x === m.id ? null : x)), 3000); return }
+    setSure(null)
+    try { await useSocial.getState().deleteMessage(m) } catch (e) { setError(e.message) }
   }
   /** Scroll to a message and let it light up for a moment. */
   function jump(id) {
@@ -348,13 +355,20 @@ export default function ChatPanel({ compact = false, convId = null, autoFocus = 
                     {!mine && (last
                       ? <button onClick={() => profile(m.sender)} className="shrink-0 rounded-full" title={who.player_name}><PersonAvatar id={m.sender} name={who.player_name} url={who.avatar_url} size={24} /></button>
                       : <span className="w-6 shrink-0" />)}
-                    <span className={`mb-1 flex shrink-0 gap-0.5 opacity-0 transition group-hover/msg:opacity-100 ${mine ? '' : 'order-last'}`}>
+                    {m.kind !== 'deleted' && <span className={`mb-1 flex shrink-0 gap-0.5 transition group-hover/msg:opacity-100 ${sure === m.id ? 'opacity-100' : 'opacity-0'} ${mine ? '' : 'order-last'}`}>
+                      {mine && (
+                        <button onClick={() => remove(m)} title={sure === m.id ? 'Nochmal klicken zum Löschen' : 'Löschen'}
+                          className={`grid h-6 place-items-center rounded-md transition ${sure === m.id ? 'bg-rose-500 px-1.5 text-[11px] font-semibold text-white' : 'w-6 text-ink-400 hover:bg-white/[0.08] hover:text-rose-300'}`}>
+                          {sure === m.id ? 'Löschen?' : <Trash2 size={12} />}
+                        </button>
+                      )}
                       <button onClick={() => startReply(m, nameOf(m))} title="Antworten" className="grid h-6 w-6 place-items-center rounded-md text-ink-400 hover:bg-white/[0.08] hover:text-white"><CornerUpLeft size={13} /></button>
                       {(m.kind === 'text' || !m.kind) && <button onClick={() => quote(m, nameOf(m))} title="Zitieren" className="grid h-6 w-6 place-items-center rounded-md text-ink-400 hover:bg-white/[0.08] hover:text-white"><Quote size={12} /></button>}
-                    </span>
+                    </span>}
                     <div title={time(m.created_at)} className={`flex max-w-[78%] flex-col ${mine ? 'items-end' : 'items-start'}`}>
-                      {m.payload?.reply && <ReplyRef r={m.payload.reply} mine={mine} onJump={jump} />}
-                      {m.kind === 'invite' ? <InviteCard m={m} mine={mine} who={who?.player_name} />
+                      {m.payload?.reply && <ReplyRef r={m.payload.reply} mine={mine} onJump={jump} gone={list.some(x => x.id === m.payload.reply.id && x.kind === 'deleted')} />}
+                      {m.kind === 'deleted' ? <div className="rounded-2xl border border-white/[0.07] px-3 py-[6px] text-[12.5px] italic text-ink-500">Nachricht gelöscht</div>
+                        : m.kind === 'invite' ? <InviteCard m={m} mine={mine} who={who?.player_name} />
                         : m.kind === 'media' ? <MediaMessage m={m} />
                         : emojiOnly(m.body) ? <div className={`leading-tight ${emojiOnly(m.body) === 1 ? 'text-[44px]' : 'text-[34px]'}`}>{m.body}</div>
                         : emotesOnly(m.body) ? <BigEmotes body={m.body} />
