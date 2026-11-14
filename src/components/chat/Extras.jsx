@@ -149,6 +149,32 @@ export function onlyImage(body) {
   return !/\s/.test(t) && !!imageUrl(t)
 }
 
+/** A YouTube link: plays right here in the chat (click), bigger / in the browser via the small button. */
+function YouTubeCard({ yt, onBig, onFail }) {
+  const [play, setPlay] = useState(false)
+  const link = `https://www.youtube.com/watch?v=${yt}`
+  if (play) {
+    return (
+      <span className="mt-1 block w-[320px] max-w-full overflow-hidden rounded-xl bg-black">
+        <iframe title="YouTube" src={`https://www.youtube-nocookie.com/embed/${yt}?autoplay=1&rel=0`} referrerPolicy="strict-origin-when-cross-origin"
+          allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowFullScreen className="aspect-video w-full border-0" />
+        <span className="flex justify-end gap-1 bg-black px-1.5 py-1">
+          <button type="button" onClick={() => onBig(link)} title="Groß ansehen" className="rounded-md bg-white/10 px-2 py-0.5 text-[10.5px] text-white hover:bg-white/20">Groß</button>
+          <button type="button" onClick={() => setPlay(false)} title="Video schließen" className="rounded-md bg-white/10 px-2 py-0.5 text-[10.5px] text-white hover:bg-white/20">Zu</button>
+        </span>
+      </span>
+    )
+  }
+  return (
+    <button type="button" onClick={() => setPlay(true)} title="Abspielen" className="group relative mt-1 block w-60 max-w-full overflow-hidden rounded-xl">
+      <img src={`https://i.ytimg.com/vi/${yt}/hqdefault.jpg`} alt="" loading="lazy" referrerPolicy="no-referrer" onError={onFail} className="aspect-video w-full object-cover" />
+      <span className="absolute inset-0 grid place-items-center bg-black/25 transition group-hover:bg-black/10">
+        <span className="grid h-11 w-11 place-items-center rounded-full bg-[#ff0033] text-white shadow-lg"><Play size={18} fill="currentColor" /></span>
+      </span>
+    </button>
+  )
+}
+
 export function LinkPreview({ body }) {
   const [failed, setFailed] = useState(false)
   const urls = body.match(URL_RE) || []
@@ -162,15 +188,7 @@ export function LinkPreview({ body }) {
       </button>
     )
   }
-  const link = `https://www.youtube.com/watch?v=${yt}`
-  return (
-    <button type="button" onClick={() => api.openLink(link).catch(() => {})} className="group relative mt-1 block w-60 max-w-full overflow-hidden rounded-xl">
-      <img src={`https://i.ytimg.com/vi/${yt}/hqdefault.jpg`} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(true)} className="aspect-video w-full object-cover" />
-      <span className="absolute inset-0 grid place-items-center bg-black/25 transition group-hover:bg-black/10">
-        <span className="grid h-11 w-11 place-items-center rounded-full bg-[#ff0033] text-white shadow-lg"><Play size={18} fill="currentColor" /></span>
-      </span>
-    </button>
-  )
+  return <YouTubeCard yt={yt} onFail={() => setFailed(true)} onBig={link => api.openLink(link).catch(() => {})} />
 }
 
 // ------------------------------------------------------------------ invites
