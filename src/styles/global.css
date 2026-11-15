@@ -154,3 +154,6 @@ body {
 .reveal {
   animation: var(--animate-fade-up);
 }
+
+/* picture viewer (Base.astro): slightly smaller while it fades in */
+.scale95 { transform: scale(0.95); }
