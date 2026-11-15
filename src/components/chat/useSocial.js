@@ -68,6 +68,21 @@ function videoSize(file) {
 
 const backgrounded = () => typeof document !== 'undefined' && document.visibilityState === 'hidden'
 
+// Which call someone is in goes into everyone's presence only as a tag of the
+// chat's id: people in that chat can tell (they know the id), nobody else can
+// find the call from it.
+function callTag(id) {
+  let h1 = 0xdeadbeef ^ 0, h2 = 0x41c6ce57 ^ 0
+  for (let i = 0; i < id.length; i++) {
+    const ch = id.charCodeAt(i)
+    h1 = Math.imul(h1 ^ ch, 2654435761)
+    h2 = Math.imul(h2 ^ ch, 1597334677)
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909)
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909)
+  return 'c' + (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36)
+}
+
 export const useSocial = create((set, get) => ({
   enabled: !!supabase,
   session: undefined,
@@ -85,6 +100,7 @@ export const useSocial = create((set, get) => ({
   reads: {},  // convId -> { userId: last read timestamp }
   beta: { access: false, admin: false }, // "In Entwicklung" unlocked? admin (may unlock others)?
   views: {},
+  older: {},      // convId -> 'loading' | 'done' (scrolled back to the first message) | null
   call: null,     // convId of the call you are in (others in that chat see it and can join)
   callSince: 0,
   watching: [], // chats someone is looking at right now (overlay windows): new messages there count as read
@@ -174,7 +190,8 @@ export const useSocial = create((set, get) => ({
     if (status === 'invisible' || status === 'offline') { presence.untrack(); return }
     const shown = status === 'online' && idle ? 'afk' : status
     const { call, callSince } = get()
-    presence.track({ name: me?.player_name || '', avatar: me?.avatar_url || null, game: game || null, status: shown, since: Date.now(), call: call || null, callSince: call ? callSince : 0 })
+    // only a tag of the chat's id: see callTag in useCall
+    presence.track({ name: me?.player_name || '', avatar: me?.avatar_url || null, game: game || null, status: shown, since: Date.now(), call: call ? callTag(call) : null, callSince: call ? callSince : 0 })
   },
 
   /** The call you are in (useCall): goes into your presence. */
@@ -283,6 +300,25 @@ export const useSocial = create((set, get) => ({
     set({ messages: { ...get().messages, [m.conversation_id]: list.map(x => (x.id === m.id ? { ...x, ...m } : x)) } })
   },
 
+  /** Scrolling up: the next 80 before the oldest one shown. False when there were none. */
+  async loadOlder(convId) {
+    const list = get().messages[convId]
+    const st = get().older[convId]
+    if (!supabase || !list?.length || st === 'done' || st === 'loading') return false
+    set({ older: { ...get().older, [convId]: 'loading' } })
+    const { data, error } = await supabase
+      .from('social_messages')
+      .select('id, conversation_id, sender, kind, body, payload, created_at')
+      .eq('conversation_id', convId)
+      .lt('created_at', list[0].created_at)
+      .order('created_at', { ascending: false })
+      .limit(80)
+    const more = (data || []).reverse()
+    const now = get().messages[convId] || []
+    set({ messages: { ...get().messages, [convId]: [...more.filter(m => !now.some(x => x.id === m.id)), ...now] }, older: { ...get().older, [convId]: error ? null : more.length < 80 ? 'done' : null } })
+    return more.length > 0
+  },
+
   _onMessage(m) {
     const uid = get().session?.user?.id
     const list = get().messages[m.conversation_id]
@@ -387,7 +423,7 @@ export const useSocial = create((set, get) => ({
       .eq('conversation_id', convId)
       .order('created_at', { ascending: false })
       .limit(80)
-    set({ messages: { ...get().messages, [convId]: (data || []).reverse() } })
+    set({ messages: { ...get().messages, [convId]: (data || []).reverse() }, older: { ...get().older, [convId]: (data || []).length < 80 ? 'done' : null } })
     get()._joinConv(convId)
     await get()._markRead(convId)
   },

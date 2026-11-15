@@ -39,6 +39,21 @@ const load = (k, d) => { try { const r = localStorage.getItem(PREFIX + k); retur
 const save = (k, v) => { try { localStorage.setItem(PREFIX + k, JSON.stringify(v)) } catch { /* blocked */ } }
 const setSetting = (k, v) => save('settings', { ...load('settings', {}), [k]: v })
 
+// Which call someone is in goes into everyone's presence only as a tag of the
+// chat's id: people in that chat can tell (they know the id), nobody else can
+// find the call from it.
+export function callTag(id) {
+  let h1 = 0xdeadbeef ^ 0, h2 = 0x41c6ce57 ^ 0
+  for (let i = 0; i < id.length; i++) {
+    const ch = id.charCodeAt(i)
+    h1 = Math.imul(h1 ^ ch, 2654435761)
+    h2 = Math.imul(h2 ^ ch, 1597334677)
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909)
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909)
+  return 'c' + (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36)
+}
+
 const ICE = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }, { urls: 'stun:stun.cloudflare.com:3478' }]
 export const CALL_MAX = 8
 const RING_MS = 45000     // the called side rings this long
@@ -53,6 +68,11 @@ const local = { micRaw: null, micSource: null, micGain: null, micAnalyser: null,
 const boardCache = new Map() // sound id -> AudioBuffer
 const boardSources = new Set()
 let ringOutTimer = null
+// Who belongs to the chat of the call (from the database). Anyone else on the
+// call channel is ignored: no connection, no picture, no sound. null = not
+// known yet (then nobody is filtered, the chat's members are still loading).
+let allowed = null
+let allowedAt = 0
 const peers = new Map() // userId -> { pc, polite, makingOffer, ignoreOffer, kinds, senders, audio: { voice, stream }, video }
 
 const me = () => useSocial.getState().session?.user?.id
@@ -190,6 +210,8 @@ export const useCall = create((set, get) => ({
     get()._boardChain()
 
     const uid = me()
+    allowed = conv?.kind === 'direct' && conv.other_id ? new Set([uid, conv.other_id]) : null
+    get()._loadAllowed(convId)
     channel = supabase.channel(`call-${convId}`, { config: { broadcast: { self: false }, presence: { key: uid } } })
     channel
       .on('broadcast', { event: 'sig' }, ({ payload }) => { get()._signal(payload).catch(() => {}) })
@@ -226,17 +248,31 @@ export const useCall = create((set, get) => ({
     channel?.track({ name: s.me?.player_name || '', avatar: s.me?.avatar_url || null, muted: muted || !local.micRaw, deaf, video: camera, stream: sharing?.name || null, screens: get().myScreens })
   },
 
+  /** The chat's members (who may be in its call). Asked again when a stranger shows up (someone just added). */
+  async _loadAllowed(convId) {
+    allowedAt = Date.now()
+    try {
+      const { data, error } = await supabase.rpc('social_members_of', { conv: convId })
+      if (error || !Array.isArray(data) || get().call?.convId !== convId) return
+      const ids = data.map(r => r.user_id).filter(Boolean)
+      if (ids.length) { allowed = new Set([me(), ...ids]); get()._sync() }
+    } catch { /* offline: keep what we have */ }
+  },
+
   /** Who is in the call: connect to newcomers, drop who left. */
   _sync() {
     if (!channel) return
     const state = channel.presenceState()
     const uid = me()
     const members = {}
+    let stranger = false
     for (const [id, metas] of Object.entries(state)) {
       if (id === uid) continue
+      if (allowed && !allowed.has(id)) { stranger = true; continue }
       const m = metas[metas.length - 1] || {}
       members[id] = { name: m.name, avatar: m.avatar, muted: !!m.muted, deaf: !!m.deaf, video: !!m.video, stream: m.stream || null, screens: Array.isArray(m.screens) ? m.screens : [], state: peers.get(id)?.pc.connectionState || 'new' }
     }
+    if (stranger && Date.now() - allowedAt > 10000 && get().call) get()._loadAllowed(get().call.convId)
     const before = Object.keys(get().members)
     set({ members, ...(Object.keys(members).length ? { outgoing: null } : {}) })
     if (Object.keys(members).length) clearTimeout(ringOutTimer)
@@ -293,6 +329,7 @@ export const useCall = create((set, get) => ({
 
   async _signal({ from, to, description, candidate, kinds }) {
     if (to !== me() || !from) return
+    if (allowed && !allowed.has(from)) return // not from this chat
     const p = peers.get(from) || (get().members[from] || description ? get()._connect(from) : null)
     if (!p) return
     if (kinds) p.kinds = { ...p.kinds, ...kinds }
@@ -687,16 +724,18 @@ export const useCall = create((set, get) => ({
   _seeCalls(online, prev) {
     const s = useSocial.getState()
     const uid = me()
-    const mine = new Set(s.convs.map(c => c.id))
+    // a call in one of your chats: by its tag (older versions sent the id itself)
+    const byTag = new Map(s.convs.flatMap(c => [[callTag(c.id), c.id], [c.id, c.id]]))
+    const convOf = p => (p?.call ? byTag.get(p.call) || null : null)
     const active = {}
-    for (const [id, p] of Object.entries(online || {})) if (p?.call && mine.has(p.call) && id !== uid) (active[p.call] ||= []).push(id)
+    for (const [id, p] of Object.entries(online || {})) { const c = convOf(p); if (c && id !== uid) (active[c] ||= []).push(id) }
     const was = get().ringing
     const ringing = was && active[was.convId] && Date.now() - was.at < RING_MS ? was : null
     set({ active, ringing })
     // the caller hung up before you answered
     if (was && !ringing && get().call?.convId !== was.convId) get().onNotice?.(`Verpasster Anruf von ${was.title ? `${was.name} (${was.title})` : was.name}.`)
     for (const [convId, ids] of Object.entries(active)) {
-      const before = Object.entries(prev || {}).some(([id, p]) => id !== uid && p?.call === convId)
+      const before = Object.entries(prev || {}).some(([id, p]) => id !== uid && convOf(p) === convId)
       if (before || get().call?.convId === convId || ringing) continue
       const first = online[ids[0]]
       if (Date.now() - (first.callSince || 0) > RING_MS) continue

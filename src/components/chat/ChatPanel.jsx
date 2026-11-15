@@ -152,6 +152,8 @@ export default function ChatPanel({ compact = false, convId = null, autoFocus = 
   const scroller = useRef(null)
   const input = useRef(null)
   const stick = useRef(true)
+  const fetching = useRef(false)
+  const older = useSocial(s => (id ? s.older[id] : null))
 
   const group = chat?.kind === 'group'
   const friend = chat?.friend
@@ -324,10 +326,21 @@ export default function ChatPanel({ compact = false, convId = null, autoFocus = 
       </div>}
       {!compact && <CallInChat convId={id} />}
 
-      <div ref={scroller} onScroll={e => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60 }}
+      <div ref={scroller} onScroll={e => {
+        const el = e.currentTarget
+        stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60
+        // near the top: the messages before these, without jumping
+        if (el.scrollTop < 80 && !fetching.current && list?.length && older !== 'done') {
+          fetching.current = true
+          const h = el.scrollHeight
+          useSocial.getState().loadOlder(id).then(more => requestAnimationFrame(() => { if (more) el.scrollTop += el.scrollHeight - h; fetching.current = false }))
+        }
+      }}
         onLoadCapture={() => { const el = scroller.current; if (el && stick.current) el.scrollTop = el.scrollHeight }}
         className="selectable min-h-0 flex-1 overflow-y-auto px-3 py-3">
         {!list && <div className="grid h-full place-items-center text-ink-500"><Loader2 size={18} className="animate-spin" /></div>}
+        {list?.length > 0 && older === 'loading' && <div className="py-2 text-center text-ink-500"><Loader2 size={14} className="inline animate-spin" /></div>}
+        {list?.length > 0 && older === 'done' && <div className="pb-2 pt-1 text-center text-[11px] text-ink-500">Hier fängt euer Chat an.</div>}
         {list && list.length === 0 && (
           <div className="grid h-full place-items-center px-6 text-center">
             <div className="flex flex-col items-center">
