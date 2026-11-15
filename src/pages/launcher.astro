@@ -3,8 +3,70 @@ import Base from '../layouts/Base.astro'
 import DownloadButton from '../components/DownloadButton.astro'
 import ReleaseList from '../components/ReleaseList.astro'
 import { launcher } from '../lib/site.js'
+
+// What the launcher can do, short. `k`: extra words the search finds it by.
+const parts = [
+  {
+    id: 'bibliothek', title: 'Bibliothek', img: 'bibliothek', k: 'spiele installieren starten update favorit stern sortieren kategorie',
+    text: 'Spiele installieren und starten. Updates kommen von selbst.',
+    tips: ['Stern auf einer Kachel = Favorit, steht dann ganz oben.', 'Kacheln und Bereiche lassen sich mit der Maus verschieben.', 'Oben gibt es Reiter: Installiert, Nicht installiert, Updates.'],
+  },
+  {
+    id: 'spielstaende', title: 'Spielstände', k: 'speichern sicherung backup zurück laden savegame',
+    text: 'Nach jedem Spielen legt der Launcher eine Sicherung an, die letzten fünf bleiben.',
+    tips: ['Rechtsklick auf ein Spiel → Spielstände: zurückholen oder selbst sichern.'],
+  },
+  {
+    id: 'chat', title: 'Freunde & Chat', img: 'chat', k: 'freunde code hinzufügen nachricht gif bild video youtube datei umfrage würfeln antworten zitieren löschen',
+    text: 'Freunde per Code hinzufügen (deiner steht rechts oben), dann einfach schreiben.',
+    tips: ['Bilder, GIFs, YouTube-Links spielen direkt im Chat.', 'Das + im Eingabefeld: Datei schicken, Umfrage, Würfeln. Große Dateien gehen direkt von PC zu PC, solange dein Launcher läuft.', 'Mit der Maus über eine Nachricht: antworten, zitieren, löschen.'],
+  },
+  {
+    id: 'anrufe', title: 'Anrufe', k: 'anruf call sprechen mikro kamera bildschirm teilen stream programm sound soundboard lautstärke vollbild bild im bild',
+    text: 'Der Hörer oben im Chat ruft an, in Gruppen auch mit mehreren.',
+    tips: ['Bildschirm, ein Fenster oder nur den Sound eines Programms teilen (z. B. Musik).', 'Lautstärke für jede Person einzeln, eigenes Soundboard.', 'Ansicht wechseln: Ecke, im Chat, groß, Vollbild, Bild im Bild oder im Overlay.'],
+  },
+  {
+    id: 'zusammen', title: 'Zusammen im Anruf', img: 'anruf-montagsmaler', k: 'aktivität montagsmaler zeichnen raten stille post gartic whiteboard malen watch party youtube zusammen schauen',
+    text: 'Der Knopf mit den Formen in der Anrufleiste startet was für alle.',
+    tips: ['Montagsmaler: einer malt, die anderen raten. Schnell raten gibt mehr Punkte.', 'Stille Post: schreiben, malen, raten, immer im Kreis. Am Ende seht ihr, was draus wurde.', 'Whiteboard zum Rumkritzeln, Watch-Party: YouTube-Link rein, alle sehen dieselbe Stelle.'],
+  },
+  {
+    id: 'overlay', title: 'Overlay', img: 'overlay', k: 'overlay im spiel ingame tastenkürzel strg umschalt leertaste fächer symbol fenster durchsichtig screenshot',
+    text: 'Chat, Freunde und Co. über jedem Spiel und auf dem Desktop.',
+    tips: ['Strg + Umschalt + Leertaste zeigt es (lässt sich ändern).', 'Klick aufs Symbol öffnet den Fächer. Was drin ist, stellst du unter Einstellungen → Overlay ein.', 'Fenster lassen sich verschieben, größer ziehen und durchsichtig machen.'],
+  },
+  {
+    id: 'wiedergabe', title: 'Wiedergabe & Video', k: 'musik spotify youtube video öffnen schauen pause weiter skip steuern medien fenster',
+    text: 'Im Overlay unter „Wiedergabe“: Musik und Videos am PC pausieren und weiterschalten, egal ob Spotify oder YouTube im Browser.',
+    tips: ['Läuft ein YouTube-Video im Browser: „Video“ öffnet es im Medien-Fenster vom Overlay, an derselben Stelle. Der Browser pausiert solange.'],
+  },
+  {
+    id: 'notizen', title: 'Notizen', img: 'notizen', k: 'notizen checkliste todo tabelle excel csv markdown reiter teilen bilder',
+    text: 'Notizen mit Checklisten, Tabellen, Bildern und Reitern.',
+    tips: ['Excel- und Markdown-Dateien einfach reinziehen. Eine Excel-Mappe wird zu Reitern.', '„Ansehen“ macht es kompakt, abhaken geht trotzdem.', 'Teilen-Knopf: Freunde lesen oder schreiben mit, Änderungen kommen live.'],
+  },
+  {
+    id: 'minispiele', title: 'Minispiele', img: 'minispiele', k: 'minispiele 2048 minesweeper snake reaktion bestenliste warten',
+    text: 'Für zwischendurch: 2048, Minesweeper, Snake und ein Reaktionstest. Auch im Overlay.',
+    tips: ['Deine Bestwerte stehen in einer Bestenliste mit deinen Freunden.'],
+  },
+  {
+    id: 'kleinkram', title: 'Kleinkram', k: 'einstellungen größe zoom status abwesend nicht stören unsichtbar autostart töne benachrichtigung',
+    text: 'Was man sonst noch wissen will.',
+    tips: ['Größe: Strg + Mausrad, Strg + 0 setzt zurück.', 'Status: online, abwesend, nicht stören oder unsichtbar.', 'Autostart, Töne und Benachrichtigungen unter Einstellungen.'],
+  },
+]
+
+const spotify = [
+  'Du brauchst Spotify Premium, sonst schaltet Spotify das nicht frei.',
+  'Auf developer.spotify.com/dashboard mit deinem Spotify-Konto anmelden und „Create app“ klicken.',
+  'Name egal. Bei „Redirect URIs“ genau das eintragen: http://127.0.0.1:43821/spotify, dann „Web API“ anhaken und speichern.',
+  'In der App unter „Settings“ die „Client ID“ kopieren.',
+  'Im Launcher: Einstellungen → Spotify → Client ID einfügen → Verbinden, im Browser zustimmen.',
+]
 ---
-<Base title="AuchLauncher" description="Alle Spiele in einem Programm, Updates kommen von selbst." image="/img/launcher-library.jpg">
+<Base title="AuchLauncher" description="Alle Spiele in einem Programm, Updates kommen von selbst." image="/img/launcher/bibliothek.jpg">
   <section class="mx-auto max-w-7xl px-5 pt-16 text-center sm:px-8">
     <img src="/logo.svg" alt="" class="reveal mx-auto h-20 w-20 drop-shadow-[0_20px_40px_rgba(109,93,252,0.6)]" />
     <h1 class="reveal mt-6 font-display text-5xl font-bold tracking-tight sm:text-6xl"><span class="text-gradient">AuchLauncher</span></h1>
@@ -14,7 +76,7 @@ import { launcher } from '../lib/site.js'
     </div>
 
     <div class="reveal mx-auto mt-14 max-w-6xl overflow-hidden rounded-3xl ring-1 ring-white/10 shadow-[0_60px_140px_-40px_rgba(109,93,252,0.6)]" style="animation-delay:150ms">
-      <img src="/img/launcher-library.jpg" alt="Die Bibliothek im AuchLauncher" class="w-full" />
+      <img src="/img/launcher/bibliothek.jpg" alt="Die Bibliothek im AuchLauncher" class="w-full" />
     </div>
   </section>
 
@@ -28,8 +90,79 @@ import { launcher } from '../lib/site.js'
     </div>
   </section>
 
+  <section class="mx-auto max-w-3xl px-5 pt-20 sm:px-8" id="kann">
+    <h2 class="font-display text-3xl font-semibold">Was er kann</h2>
+    <p class="mt-2 text-ink-400">Kurz und knapp. Such einfach, was du suchst.</p>
+
+    <div class="sticky top-[76px] z-20 mt-6">
+      <label class="card flex h-12 items-center gap-3 px-4">
+        <svg viewBox="0 0 24 24" class="h-4 w-4 shrink-0 text-ink-400" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
+        <input id="find" type="search" placeholder="Suchen, z. B. Datei, Spotify, Overlay" autocomplete="off"
+          class="h-full min-w-0 flex-1 bg-transparent text-[15px] text-white outline-none placeholder:text-ink-500" />
+      </label>
+    </div>
+    <nav class="mt-4 flex flex-wrap gap-2" id="toc">
+      {parts.map(p => <a href={`#${p.id}`} class="chip hover:bg-white/15" data-for={p.id}>{p.title}</a>)}
+      <a href="#spotify" class="chip hover:bg-white/15" data-for="spotify">Spotify einrichten</a>
+    </nav>
+
+    <div class="mt-8 space-y-5" id="parts">
+      {parts.map(p => (
+        <article id={p.id} data-part data-k={p.k} class="card scroll-mt-40 overflow-hidden">
+          <div class="p-6">
+            <h3 class="font-display text-xl font-semibold">{p.title}</h3>
+            <p class="mt-1.5 text-ink-300">{p.text}</p>
+            {p.tips?.length > 0 && (
+              <ul class="mt-3 space-y-1.5 text-[14.5px] text-ink-300">
+                {p.tips.map(t => <li class="flex gap-2.5"><span class="mt-[9px] h-1.5 w-1.5 shrink-0 rounded-full bg-brand-400"></span><span>{t}</span></li>)}
+              </ul>
+            )}
+          </div>
+          {p.img && (
+            <a href={`/img/launcher/${p.img}.jpg`} target="_blank" rel="noopener" class="block border-t border-white/[0.06]">
+              <img src={`/img/launcher/${p.img}.jpg`} alt={p.title} loading="lazy" class="w-full" />
+            </a>
+          )}
+        </article>
+      ))}
+
+      <article id="spotify" data-part data-k="spotify liken herz playlist premium client id einrichten verbinden" class="card scroll-mt-40 p-6">
+        <h3 class="font-display text-xl font-semibold">Spotify: liken &amp; Playlists</h3>
+        <p class="mt-1.5 text-ink-300">Pause und Weiter gehen immer. Wenn du im Overlay auch Songs liken und Playlists nutzen willst, brauchst du einmal eine kleine eigene Spotify-App. So will es Spotify.</p>
+        <ol class="mt-4 space-y-2.5 text-[14.5px] text-ink-300">
+          {spotify.map((s, i) => (
+            <li class="flex gap-3"><span class="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-white/[0.08] text-xs font-semibold text-white">{i + 1}</span><span class="pt-0.5">{s}</span></li>
+          ))}
+        </ol>
+        <p class="mt-4 text-[13.5px] text-ink-400">Danach gibt es unter „Wiedergabe“ ein Herz und deine Playlists (Lieblingssongs inklusive). Bis zu vier Freunde kannst du in deiner Spotify-App unter „User Management“ eintragen, die nehmen dann deine Client ID. Mehr lässt Spotify nicht zu.</p>
+      </article>
+
+      <p id="none" class="hidden py-6 text-center text-ink-400">Dazu steht hier nichts. Frag einfach im Chat.</p>
+    </div>
+  </section>
+
   <section class="mx-auto max-w-3xl px-5 pt-20 sm:px-8">
     <h2 class="font-display text-3xl font-semibold">Versionen</h2>
     <div class="mt-8"><ReleaseList releases={launcher.releases} accent="#8f82ff" /></div>
   </section>
+
+  <script>
+    // search: shows only the parts whose text (or extra words) has every word typed
+    const input = document.getElementById('find') as HTMLInputElement
+    const parts = [...document.querySelectorAll<HTMLElement>('[data-part]')]
+    const none = document.getElementById('none')!
+    const plain = (s: string) => s.toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '')
+    const text = new Map(parts.map(p => [p, plain(p.textContent + ' ' + (p.dataset.k || ''))]))
+    input?.addEventListener('input', () => {
+      const words = plain(input.value).split(/\s+/).filter(Boolean)
+      let shown = 0
+      for (const p of parts) {
+        const hit = words.every(w => text.get(p)!.includes(w))
+        p.style.display = hit ? '' : 'none'
+        document.querySelector<HTMLElement>(`#toc [data-for="${p.id}"]`)?.style.setProperty('opacity', hit ? '1' : '0.35')
+        if (hit) shown++
+      }
+      none.classList.toggle('hidden', shown > 0)
+    })
+  </script>
 </Base>
