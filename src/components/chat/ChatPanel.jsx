@@ -1,8 +1,9 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { CornerUpLeft, LogOut, Loader2, MoreHorizontal, Quote, SendHorizontal, Trash2, UserPlus, Users, X } from 'lucide-react'
+import { CornerUpLeft, LogOut, Loader2, MoreHorizontal, Phone, Quote, SendHorizontal, Trash2, UserPlus, Users, X } from 'lucide-react'
 import { useSocial } from './useSocial'
 import { useLauncher } from './shim'
 import { CallButtons, CallInChat } from './Call'
+import { useCall } from './useCall'
 import { api } from './shim'
 import { PersonAvatar, STATUS, ago, presenceStatus } from './Person'
 import { AttachButton, EmojiButton, Emote, EmoteSuggest, GifButton, InviteButton, InviteCard, LinkPreview, MediaMessage, emojiOnly, emoteSuggestions, onlyImage } from './Extras'
@@ -382,6 +383,7 @@ export default function ChatPanel({ compact = false, convId = null, autoFocus = 
                       {m.payload?.reply && <ReplyRef r={m.payload.reply} mine={mine} onJump={jump} gone={list.some(x => x.id === m.payload.reply.id && x.kind === 'deleted')} />}
                       {m.kind === 'deleted' ? <div className="rounded-2xl border border-white/[0.07] px-3 py-[6px] text-[12.5px] italic text-ink-500">Nachricht gelöscht</div>
                         : m.kind === 'invite' ? <InviteCard m={m} mine={mine} who={who?.player_name} />
+                        : m.payload?.call ? <CallCard m={m} mine={mine} />
                         : m.kind === 'media' ? <MediaMessage m={m} />
                         : emojiOnly(m.body) ? <div className={`leading-tight ${emojiOnly(m.body) === 1 ? 'text-[44px]' : 'text-[34px]'}`}>{m.body}</div>
                         : emotesOnly(m.body) ? <BigEmotes body={m.body} />
@@ -451,6 +453,26 @@ export default function ChatPanel({ compact = false, convId = null, autoFocus = 
           </button>
         </div>
       </div>
+    </div>
+  )
+}
+
+/** "Komm in den Anruf" (payload.call): a friend brings you into their call. */
+function CallCard({ m, mine }) {
+  const c = m.payload.call
+  const inIt = useCall(s => s.call?.convId === c.conv)
+  const old = Date.now() - new Date(m.created_at).getTime() > 3 * 3600e3
+  return (
+    <div className={`flex w-72 max-w-full items-center gap-3 rounded-2xl border px-3 py-2.5 ${mine ? 'border-brand-400/30 bg-brand-500/10' : 'border-white/[0.08] bg-white/[0.05]'}`}>
+      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-emerald-500/15 text-emerald-300"><Phone size={18} /></span>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-[13px] font-semibold text-white">{c.title || 'Anruf'}</div>
+        <div className="truncate text-[11px] text-ink-400">{mine ? 'Du hast dazugeholt' : `${c.name || 'Jemand'} holt dich dazu`}</div>
+      </div>
+      {mine ? null
+        : inIt ? <span className="shrink-0 text-[11px] text-emerald-300">bist drin</span>
+        : old ? <span className="shrink-0 text-[11px] text-ink-500">vorbei</span>
+        : <button onClick={() => useCall.getState().join(c.conv, { guest: true, title: c.title || `Anruf mit ${c.name || 'Freund'}` })} className="h-8 shrink-0 rounded-lg bg-emerald-500 px-3 text-[12px] font-semibold text-white hover:bg-emerald-400">Beitreten</button>}
     </div>
   )
 }

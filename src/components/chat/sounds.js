@@ -49,6 +49,8 @@ export const BUILTIN = {
   } },
   // ringback while your call rings on the other side (the usual 425 Hz)
   freiton: { label: 'Freiton', dur: 1.05, make: (c, o) => { tone(c, o, { f: 425, a: 0.02, d: 0.98, peak: 0.35 }) } },
+  // timer alarm: three short double beeps
+  wecker: { label: 'Wecker', dur: 1.5, make: (c, o) => [0, 0.45, 0.9].forEach(at => { tone(c, o, { type: 'square', f: 1046.5, at, d: 0.09, peak: 0.32 }); tone(c, o, { type: 'square', f: 1046.5, at: at + 0.15, d: 0.09, peak: 0.32 }) }) },
   klack: { label: 'Klack', dur: 0.15, make: (c, o) => { tone(c, o, { type: 'triangle', f: 2200, f2: 400, d: 0.05, glide: 0.04, peak: 0.6 }) } },
 }
 

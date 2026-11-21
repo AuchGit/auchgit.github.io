@@ -10,7 +10,7 @@ import { useEffect, useRef, useState } from 'react'
 import {
   AppWindow, AudioLines, Check, ChevronDown, Columns2, Expand, Eye, EyeOff, GripHorizontal, HeadphoneOff, Headphones, LayoutGrid, LayoutTemplate,
   Layers, Loader2, Maximize2, MessageSquare, Mic, MicOff, Minus, MonitorUp, Music2, PanelBottom, Phone, PhoneOff, PictureInPicture2, Pin, Plus, Rows2, Shrink,
-  SlidersHorizontal, Square, Upload, Video, VideoOff, Volume2, X,
+  SlidersHorizontal, Square, Upload, UserPlus, Video, VideoOff, Volume2, X,
 } from 'lucide-react'
 import { SCREEN_MAX, useCall } from './useCall'
 import { useSocial } from './useSocial'
@@ -22,6 +22,11 @@ import { CAN, PipHost, setCallView, useCallView, viewBack } from './host'
 const PREFIX = 'auch.'
 const load = (k, d) => { try { const r = localStorage.getItem(PREFIX + k); return r == null ? d : JSON.parse(r) } catch { return d } }
 const save = (k, v) => { try { localStorage.setItem(PREFIX + k, JSON.stringify(v)) } catch { /* blocked */ } }
+// activities in calls (whiteboard, games, watch party): launcher only for now
+const Activity = () => null
+const ActivityButton = () => null
+const ActivityLink = () => null
+const useActivity = sel => sel({ act: null })
 
 const since = ts => {
   const s = Math.max(0, Math.floor((Date.now() - ts) / 1000))
@@ -310,6 +315,7 @@ export function ControlBar({ compact = false, mini = false, floating = false }) 
         <>
           <Btn small={small} on={myScreens.length > 0 || !!sharing || open === 'share'} title="Bildschirm, Fenster oder Tab teilen" onClick={() => only('share')}><MonitorUp size={16} className={myScreens.length || sharing ? 'text-emerald-300' : ''} /></Btn>
           <Btn small={small} on={open === 'board' || !!playing} title="Soundboard" onClick={() => only('board')}><Music2 size={16} className={playing ? 'text-brand-300' : ''} /></Btn>
+          <ActivityButton small={small} Btn={Btn} />
           <Btn small={small} on={open === 'devs'} title="Geräte und Lautstärke" onClick={() => only('devs')}><SlidersHorizontal size={16} /></Btn>
           {floating && !mirror && <Btn small={small} on={open === 'view'} title="Ansicht und Anordnung" onClick={() => only('view')}><LayoutTemplate size={16} /></Btn>}
         </>
@@ -350,6 +356,7 @@ export function CallControls({ compact = false, onMinimize }) {
           ? <span className="flex items-center gap-1 text-[11px] text-emerald-300"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" /> klingelt</span>
           : <span className="text-[11px] tabular-nums text-ink-400">{since(call.since)}</span>}
         {onMinimize && <button className={head} title="Kleiner" onClick={onMinimize}><Minus size={13} /></button>}
+        <CallInviteButton />
         <ViewButton />
       </div>
       <ul className="min-h-0 flex-1 overflow-y-auto px-1.5 py-1">
@@ -408,6 +415,61 @@ export function LiveBadge({ className = '' }) {
   )
 }
 
+/** Bring friends into the call, also ones who aren't in this chat or group. */
+export function CallInviteButton() {
+  const [open, setOpen] = useState(false)
+  const box = useRef(null)
+  useEffect(() => {
+    if (!open) return
+    const off = e => { if (box.current && !box.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('pointerdown', off)
+    return () => document.removeEventListener('pointerdown', off)
+  }, [open])
+  return (
+    <span ref={box} className="relative">
+      <button onClick={() => setOpen(o => !o)} title="Leute dazuholen"
+        className={`grid h-6 w-6 place-items-center rounded-md ${open ? 'bg-white/[0.1] text-white' : 'text-ink-400 hover:bg-white/[0.07] hover:text-white'}`}><UserPlus size={13} /></button>
+      {open && <InvitePicker />}
+    </span>
+  )
+}
+
+function InvitePicker() {
+  const friends = useSocial(s => s.friends) || []
+  const online = useSocial(s => s.online) || {}
+  const members = useCall(s => s.members)
+  const guests = useCall(s => s.guests) || []
+  const [q, setQ] = useState('')
+  const list = friends
+    .filter(f => !members[f.user_id] && (!q || (f.player_name || '').toLowerCase().includes(q.toLowerCase())))
+    .sort((a, b) => (online[b.user_id] ? 1 : 0) - (online[a.user_id] ? 1 : 0) || (a.player_name || '').localeCompare(b.player_name || ''))
+  return (
+    <div className="absolute right-0 top-8 z-50 w-64 rounded-xl border border-white/[0.08] bg-ink-900 p-1.5 text-left shadow-lift">
+      <div className="px-2 pb-1 pt-0.5 text-[10.5px] font-semibold uppercase tracking-[0.1em] text-ink-400">Leute dazuholen</div>
+      {friends.length > 6 && <input value={q} onChange={e => setQ(e.target.value)} placeholder="Suchen" autoFocus className="mb-1 h-7 w-full rounded-md bg-white/[0.05] px-2 text-[12px] outline-none placeholder:text-ink-500 focus:bg-white/[0.08]" />}
+      <ul className="max-h-64 overflow-y-auto">
+        {list.map(f => {
+          const asked = guests.includes(f.user_id)
+          return (
+            <li key={f.user_id}>
+              <button disabled={asked} onClick={() => useCall.getState().invite([f.user_id])}
+                className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-white/[0.06] disabled:cursor-default disabled:hover:bg-transparent">
+                <PersonAvatar id={f.user_id} name={f.player_name || '?'} url={f.avatar_url} size={26} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[12.5px] text-ink-100">{f.player_name}</span>
+                  <span className="block text-[10.5px] text-ink-500">{online[f.user_id] ? 'online' : 'offline'}</span>
+                </span>
+                {asked ? <span className="flex items-center gap-1 text-[11px] text-emerald-300"><Check size={12} /> klingelt</span> : <UserPlus size={14} className="shrink-0 text-ink-400" />}
+              </button>
+            </li>
+          )
+        })}
+        {!list.length && <li className="px-2 py-2 text-[12px] text-ink-500">{friends.length ? 'Alle sind schon da.' : 'Noch keine Freunde.'}</li>}
+      </ul>
+    </div>
+  )
+}
+
 /** "X ruft an": join or let it ring out. */
 export function CallRing({ className = '' }) {
   const r = useCall(s => s.ringing)
@@ -421,10 +483,10 @@ export function CallRing({ className = '' }) {
       </span>
       <span className="min-w-0 flex-1">
         <span className="block truncate text-[13px] font-semibold">{r.title || r.name}</span>
-        <span className="block truncate text-[12px] text-ink-400">{r.title ? `${r.name} ruft an` : 'ruft an'}</span>
+        <span className="block truncate text-[12px] text-ink-400">{r.guest ? (r.title ? `${r.name} holt dich dazu` : 'holt dich in den Anruf') : r.title ? `${r.name} ruft an` : 'ruft an'}</span>
       </span>
       <button title="Nicht rangehen" onClick={() => useCall.getState().decline()} className="grid h-9 w-9 place-items-center rounded-full bg-rose-500 text-white hover:bg-rose-400"><PhoneOff size={16} /></button>
-      <button title="Rangehen" onClick={() => useCall.getState().join(r.convId)} className="grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-white hover:bg-emerald-400"><Phone size={16} /></button>
+      <button title="Rangehen" onClick={() => useCall.getState().join(r.convId, r.guest ? { guest: true, title: r.title || `Anruf mit ${r.name}` } : undefined)} className="grid h-9 w-9 place-items-center rounded-full bg-emerald-500 text-white hover:bg-emerald-400"><Phone size={16} /></button>
     </div>
   )
 }
@@ -573,6 +635,7 @@ export function CallDock() {
     <div data-dock style={at} className="fixed z-40 flex w-[320px] flex-col rounded-2xl border border-white/[0.08] bg-ink-900/[0.97] shadow-lift backdrop-blur animate-pop">
       <div onPointerDown={drag} title="Verschieben" className="flex h-3.5 cursor-grab items-center justify-center rounded-t-2xl text-ink-600 hover:text-ink-400 active:cursor-grabbing"><GripHorizontal size={14} /></div>
       {pictures && <div className="aspect-video w-full px-2"><Stage solo small /></div>}
+      <ActivityLink className="mx-2 mt-1 w-auto" />
       <div className="h-[300px]">
         <CallControls compact onMinimize={() => small(true)} />
       </div>
@@ -617,11 +680,13 @@ export function CallInChat({ convId }) {
             </span>
           ))}
         </span>
+        <CallInviteButton />
         <ViewButton />
       </div>
       {pictures && <div style={{ height: h }} className="px-2 pt-2"><Stage layout={layout} small /></div>}
       {pictures && <div onPointerDown={drag} title="Höhe ziehen" className="flex h-3 cursor-ns-resize items-center justify-center"><span className="h-1 w-12 rounded-full bg-white/10" /></div>}
       {error && <div className="mx-3 mt-1 rounded-lg bg-rose-500/10 px-2.5 py-1.5 text-[11.5px] text-rose-200">{error}</div>}
+      <ActivityLink className="mx-3 mt-1.5 w-auto" />
       <ControlBar compact />
     </div>
   )
@@ -631,6 +696,8 @@ export function CallInChat({ convId }) {
 export function CallPage() {
   const call = useCall(s => s.call)
   const layout = useCall(s => s.layout)
+  const act = useActivity(s => !!s.act)
+  const pictures = usePictures()
   if (!call) {
     return (
       <div className="grid h-full place-items-center px-10 text-center text-sm text-ink-400">
@@ -646,7 +713,12 @@ export function CallPage() {
       <div className="card h-[45%] w-full shrink-0 md:h-full md:w-[320px]">
         <CallControls onMinimize={() => setCallView('dock')} />
       </div>
-      <div className="min-h-0 min-w-0 flex-1"><Stage layout={layout} /></div>
+      {act ? (
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
+          <div className="card min-h-0 flex-1 overflow-hidden"><Activity /></div>
+          {pictures && <div className="h-36 shrink-0"><Stage layout="side" small /></div>}
+        </div>
+      ) : <div className="min-h-0 min-w-0 flex-1"><Stage layout={layout} /></div>}
     </div>
   )
 }
@@ -655,6 +727,7 @@ export function CallPage() {
 function CallFull() {
   const layout = useCall(s => s.layout)
   const call = useCall(s => s.call)
+  const act = useActivity(s => !!s.act)
   useTick(!!call)
   useEffect(() => {
     const key = e => { if (e.key === 'Escape') viewBack() }
@@ -668,7 +741,7 @@ function CallFull() {
         <Phone size={12} className="text-emerald-400" /> {call.title} <span className="tabular-nums text-ink-400">{since(call.since)}</span>
       </div>
       <button onClick={() => viewBack()} title="Vollbild verlassen (Esc)" className="absolute right-4 top-3 z-10 grid h-9 w-9 place-items-center rounded-full bg-black/50 text-white backdrop-blur hover:bg-black/70"><Shrink size={16} /></button>
-      <div className="min-h-0 flex-1 pb-16 pt-10"><Stage layout={layout} /></div>
+      <div className="min-h-0 flex-1 pb-16 pt-10">{act ? <div className="h-full overflow-hidden rounded-xl bg-ink-900"><Activity /></div> : <Stage layout={layout} />}</div>
       <div className="absolute inset-x-0 bottom-4 flex justify-center"><ControlBar floating /></div>
     </div>
   )

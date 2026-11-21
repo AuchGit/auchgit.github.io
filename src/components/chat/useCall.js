@@ -166,7 +166,8 @@ export const useCall = create((set, get) => ({
   boardPlaying: null,
   volumes: load('callVolumes', {}), // userId -> { voice, stream } in %
   active: {},        // convId -> [userId] calls running in your chats (from presence)
-  ringing: null,     // { convId, from, name, title, at }
+  ringing: null,     // { convId, from, name, title, at, guest }
+  guests: [],        // friends you brought into this call (not in its chat); everyone in it lets them in
   outgoing: null,    // { convId, since } while your call rings and nobody answered yet
   error: null,
   selfView: load('settings', {}).callSelfView !== false, // own camera picture shown
@@ -175,16 +176,19 @@ export const useCall = create((set, get) => ({
   levels: { input: load('settings', {}).callInputVolume ?? 100, output: load('settings', {}).callOutputVolume ?? 100 },
 
   // ------------------------------------------------------------------ joining / leaving
-  /** Starts or joins the call of a chat. `video`: camera on right away. */
-  async join(convId, { video = false } = {}) {
+  /**
+   * Starts or joins the call of a chat. `video`: camera on right away. `guest`: someone
+   * in it brought you in (you're not in that chat), `title` then names the call.
+   */
+  async join(convId, { video = false, guest = false, title: named = null } = {}) {
     if (!supabase || !me()) return
     if (get().call?.convId === convId) return
     if (get().call) await get().leave()
     const conv = useSocial.getState().convs.find(c => c.id === convId)
     const view = useSocial.getState().views[convId] || useSocial.getState().chat
-    const title = conv?.kind === 'group' ? conv.title : conv?.title || view?.friend?.player_name || view?.title || 'Anruf'
+    const title = named || (conv?.kind === 'group' ? conv.title : conv?.title || view?.friend?.player_name || view?.title || 'Anruf')
     // nobody in it yet: you are calling, it rings on the other side until someone answers
-    const calling = !(get().active[convId] || []).length
+    const calling = !guest && !(get().active[convId] || []).length
     set({ joining: true, error: null, ringing: get().ringing?.convId === convId ? null : get().ringing })
     audioCtx()
     // microphone (without one you can still listen)
@@ -195,9 +199,11 @@ export const useCall = create((set, get) => ({
       local.micRaw = null
       set({ error: /denied|NotAllowed/i.test(String(e?.name || e)) ? 'Kein Zugriff aufs Mikrofon. Du hörst trotzdem zu.' : 'Kein Mikrofon gefunden. Du hörst trotzdem zu.' })
     }
-    const kind = conv?.kind || (view?.kind === 'group' ? 'group' : 'direct')
-    set({ call: { convId, title, kind, since: Date.now() }, joining: false, members: {}, speaking: {}, videos: {}, screens: {}, myScreens: [], outgoing: calling ? { convId, since: Date.now() } : null })
-    useSocial.getState().setCall(convId)
+    const kind = guest ? 'group' : conv?.kind || (view?.kind === 'group' ? 'group' : 'direct')
+    set({ call: { convId, title, kind, since: Date.now(), guest }, joining: false, members: {}, speaking: {}, videos: {}, screens: {}, myScreens: [], guests: [], outgoing: calling ? { convId, since: Date.now() } : null })
+    useSocial.getState().setCall(convId, guest)
+    // brought in, but nobody's there (any more): the call is over
+    if (guest) setTimeout(() => { if (get().call?.convId === convId && !Object.keys(get().members).length) { get().onNotice?.('Der Anruf ist schon vorbei.'); get().leave() } }, 9000)
     clearTimeout(ringOutTimer)
     if (calling) {
       ringOutTimer = setTimeout(() => {
@@ -216,6 +222,8 @@ export const useCall = create((set, get) => ({
     channel
       .on('broadcast', { event: 'sig' }, ({ payload }) => { get()._signal(payload).catch(() => {}) })
       .on('broadcast', { event: 'decline' }, ({ payload }) => {
+        // someone you brought in doesn't come: just say so
+        if (payload?.guest) { if (get().guests.includes(payload.from)) get().onNotice?.(`${payload.name || 'Jemand'} kommt gerade nicht.`); return }
         // the called one doesn't want to: a direct call ends, a group call keeps waiting for the others
         if (!get().outgoing) return
         if (get().call?.kind === 'direct') { get().onNotice?.(`${payload?.name || 'Die andere Seite'} hat abgelehnt.`); get().leave() }
@@ -237,7 +245,7 @@ export const useCall = create((set, get) => ({
     try { local.micSource?.disconnect() } catch { /* gone */ }
     Object.assign(local, { micRaw: null, micSource: null, progStream: null, progNode: null, camStream: null })
     if (channel) { supabase.removeChannel(channel); channel = null }
-    set({ call: null, members: {}, speaking: {}, videos: {}, screens: {}, myScreens: [], sharing: null, camera: false, joining: false, outgoing: null, pinned: null })
+    set({ call: null, members: {}, speaking: {}, videos: {}, screens: {}, myScreens: [], guests: [], sharing: null, camera: false, joining: false, outgoing: null, pinned: null })
     useSocial.getState().setCall(null)
   },
 
@@ -245,7 +253,35 @@ export const useCall = create((set, get) => ({
   _announce() {
     const s = useSocial.getState()
     const { muted, deaf, camera, sharing } = get()
-    channel?.track({ name: s.me?.player_name || '', avatar: s.me?.avatar_url || null, muted: muted || !local.micRaw, deaf, video: camera, stream: sharing?.name || null, screens: get().myScreens })
+    channel?.track({ name: s.me?.player_name || '', avatar: s.me?.avatar_url || null, muted: muted || !local.micRaw, deaf, video: camera, stream: sharing?.name || null, screens: get().myScreens, guests: get().guests })
+  },
+
+  /** Bring friends into the call (they don't have to be in its chat): it rings for them. */
+  async invite(ids) {
+    const c = get().call
+    if (!c || !supabase || !ids?.length) return
+    const s = useSocial.getState()
+    set({ guests: [...new Set([...get().guests, ...ids])] })
+    get()._announce()
+    const title = c.kind === 'group' && !c.guest ? c.title : null
+    for (const id of ids) {
+      try {
+        const { data: conv, error } = await supabase.rpc('social_open_direct', { other: id })
+        if (error || !conv) throw error || new Error('no chat')
+        await s.send('Komm in den Anruf', { payload: { call: { conv: c.convId, title, name: s.me?.player_name || '' } } }, conv)
+      } catch { set({ error: 'Die Einladung ging nicht raus.' }) }
+    }
+  },
+
+  /** A friend brings you into their call (a chat message): it rings like a call. */
+  _invited(m) {
+    const p = m?.payload?.call
+    if (get().mirror || !p?.conv || m.sender === me()) return
+    if (Date.now() - new Date(m.created_at).getTime() > RING_MS || get().call?.convId === p.conv) return
+    const r = { convId: p.conv, from: m.sender, name: p.name || useSocial.getState().nameOf?.(m.sender) || 'Jemand', title: p.title || null, at: Date.now(), guest: true }
+    set({ ringing: r })
+    get().onRing?.(r)
+    setTimeout(() => { if (get().ringing === r) { set({ ringing: null }); get().onNotice?.(`Verpasster Anruf von ${r.name}.`) } }, RING_MS)
   },
 
   /** The chat's members (who may be in its call). Asked again when a stranger shows up (someone just added). */
@@ -266,9 +302,12 @@ export const useCall = create((set, get) => ({
     const uid = me()
     const members = {}
     let stranger = false
+    // friends brought in by someone who belongs here
+    const vouched = new Set(get().guests)
+    for (const [id, metas] of Object.entries(state)) if (!allowed || allowed.has(id)) for (const m of metas) for (const g of m.guests || []) vouched.add(g)
     for (const [id, metas] of Object.entries(state)) {
       if (id === uid) continue
-      if (allowed && !allowed.has(id)) { stranger = true; continue }
+      if (allowed && !allowed.has(id) && !vouched.has(id)) { stranger = true; continue }
       const m = metas[metas.length - 1] || {}
       members[id] = { name: m.name, avatar: m.avatar, muted: !!m.muted, deaf: !!m.deaf, video: !!m.video, stream: m.stream || null, screens: Array.isArray(m.screens) ? m.screens : [], state: peers.get(id)?.pc.connectionState || 'new' }
     }
@@ -329,7 +368,7 @@ export const useCall = create((set, get) => ({
 
   async _signal({ from, to, description, candidate, kinds }) {
     if (to !== me() || !from) return
-    if (allowed && !allowed.has(from)) return // not from this chat
+    if (allowed && !allowed.has(from) && !get().members[from]) return // not from this chat (or brought in by someone who is)
     const p = peers.get(from) || (get().members[from] || description ? get()._connect(from) : null)
     if (!p) return
     if (kinds) p.kinds = { ...p.kinds, ...kinds }
@@ -730,13 +769,15 @@ export const useCall = create((set, get) => ({
     const active = {}
     for (const [id, p] of Object.entries(online || {})) { const c = convOf(p); if (c && id !== uid) (active[c] ||= []).push(id) }
     const was = get().ringing
-    const ringing = was && active[was.convId] && Date.now() - was.at < RING_MS ? was : null
+    const ringing = was && (was.guest || active[was.convId]) && Date.now() - was.at < RING_MS ? was : null
     set({ active, ringing })
     // the caller hung up before you answered
     if (was && !ringing && get().call?.convId !== was.convId) get().onNotice?.(`Verpasster Anruf von ${was.title ? `${was.name} (${was.title})` : was.name}.`)
     for (const [convId, ids] of Object.entries(active)) {
       const before = Object.entries(prev || {}).some(([id, p]) => id !== uid && convOf(p) === convId)
       if (before || get().call?.convId === convId || ringing) continue
+      // only people brought in from outside left in there: that doesn't ring
+      if (ids.every(id => online[id]?.callGuest)) continue
       const first = online[ids[0]]
       if (Date.now() - (first.callSince || 0) > RING_MS) continue
       const conv = s.convs.find(c => c.id === convId)
@@ -755,7 +796,7 @@ export const useCall = create((set, get) => ({
     const ch = supabase.channel(`call-${r.convId}`, { config: { broadcast: { self: false } } })
     ch.subscribe(status => {
       if (status !== 'SUBSCRIBED') return
-      ch.send({ type: 'broadcast', event: 'decline', payload: { from: me(), name: useSocial.getState().me?.player_name || '' } })
+      ch.send({ type: 'broadcast', event: 'decline', payload: { from: me(), name: useSocial.getState().me?.player_name || '', guest: !!r.guest } })
       setTimeout(() => supabase.removeChannel(ch), 1500)
     })
   },
@@ -768,6 +809,9 @@ export const useCall = create((set, get) => ({
 
 // Your soundboard list (the launcher window; overlays get it with the snapshot).
 if (typeof window !== 'undefined') setTimeout(() => useCall.getState().loadBoard(), 0)
+
+// Friends bringing you into their call (a chat message) ring here.
+useSocial.setState({ onCallInvite: m => useCall.getState()._invited(m) })
 
 // Calls running in your chats follow the global presence.
 let lastOnline = {}

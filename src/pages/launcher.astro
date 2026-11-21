@@ -22,19 +22,19 @@ const parts = [
     tips: ['Bilder, GIFs, YouTube-Links spielen direkt im Chat.', 'Das + im Eingabefeld: Datei schicken, Umfrage, Würfeln. Große Dateien gehen direkt von PC zu PC, solange dein Launcher läuft.', 'Mit der Maus über eine Nachricht: antworten, zitieren, löschen.'],
   },
   {
-    id: 'anrufe', title: 'Anrufe', k: 'anruf call sprechen mikro kamera bildschirm teilen stream programm sound soundboard lautstärke vollbild bild im bild',
+    id: 'anrufe', title: 'Anrufe', k: 'anruf call sprechen mikro kamera bildschirm teilen stream programm sound soundboard lautstärke vollbild bild im bild dazuholen einladen hinzufügen',
     text: 'Der Hörer oben im Chat ruft an, in Gruppen auch mit mehreren.',
-    tips: ['Bildschirm, ein Fenster oder nur den Sound eines Programms teilen (z. B. Musik).', 'Lautstärke für jede Person einzeln, eigenes Soundboard.', 'Ansicht wechseln: Ecke, im Chat, groß, Vollbild, Bild im Bild oder im Overlay.'],
+    tips: ['Leute dazuholen (das Personen-Plus oben im Anruf): bei Freunden klingelt es, auch wenn sie nicht in dem Chat oder der Gruppe sind.', 'Bildschirm, ein Fenster oder nur den Sound eines Programms teilen (z. B. Musik).', 'Lautstärke für jede Person einzeln, eigenes Soundboard.', 'Ansicht wechseln: Ecke, im Chat, groß, Vollbild, Bild im Bild oder im Overlay.'],
   },
   {
-    id: 'zusammen', title: 'Zusammen im Anruf', img: 'anruf-montagsmaler', k: 'aktivität montagsmaler zeichnen raten stille post gartic whiteboard malen watch party youtube zusammen schauen',
-    text: 'Der Knopf mit den Formen in der Anrufleiste startet was für alle.',
-    tips: ['Montagsmaler: einer malt, die anderen raten. Schnell raten gibt mehr Punkte.', 'Stille Post: schreiben, malen, raten, immer im Kreis. Am Ende seht ihr, was draus wurde.', 'Whiteboard zum Rumkritzeln, Watch-Party: YouTube-Link rein, alle sehen dieselbe Stelle.'],
+    id: 'zusammen', title: 'Zusammen im Anruf', img: 'anruf-montagsmaler', k: 'aktivität montagsmaler zeichnen raten stille post gartic whiteboard malen watch party youtube zusammen schauen spiele',
+    text: 'Der Knopf mit den Formen in der Anrufleiste startet was für alle: Whiteboard, Watch-Party oder ein Spiel.',
+    tips: ['Whiteboard zum Rumkritzeln, Watch-Party: YouTube-Link rein, alle sehen dieselbe Stelle.', '„Spiele“ führt zu den Multiplayer-Minispielen, z. B. Montagsmaler (einer malt, alle raten) oder Stille Post (schreiben, malen, raten, im Kreis).', 'Im Anruf heißt es dort „Mit dem Anruf“: wer drin ist, wird direkt gefragt.'],
   },
   {
-    id: 'overlay', title: 'Overlay', img: 'overlay', k: 'overlay im spiel ingame tastenkürzel strg umschalt leertaste fächer symbol fenster durchsichtig screenshot',
+    id: 'overlay', title: 'Overlay', img: 'overlay', k: 'overlay im spiel ingame tastenkürzel strg umschalt leertaste fächer symbol fenster durchsichtig screenshot farbe anheften rechtsklick status',
     text: 'Chat, Freunde und Co. über jedem Spiel und auf dem Desktop.',
-    tips: ['Strg + Umschalt + Leertaste zeigt es (lässt sich ändern).', 'Klick aufs Symbol öffnet den Fächer. Was drin ist, stellst du unter Einstellungen → Overlay ein.', 'Fenster lassen sich verschieben, größer ziehen und durchsichtig machen.'],
+    tips: ['Strg + Umschalt + Leertaste zeigt es (lässt sich ändern).', 'Klick aufs Symbol öffnet den Fächer, Rechtsklick aufs Symbol: Status, Sounds, Profil, Einstellungen.', 'Rechtsklick auf einen Fächer-Knopf: einfärben (ganz oder nur der Rand) oder rausnehmen. Medien und Wiedergabe tauchen nur auf, wenn es was gibt.', 'Fenster lassen sich verschieben, größer ziehen und durchsichtig machen.'],
   },
   {
     id: 'wiedergabe', title: 'Wiedergabe & Video', k: 'musik spotify youtube video öffnen schauen pause weiter skip steuern medien fenster',
@@ -47,9 +47,9 @@ const parts = [
     tips: ['Teilen-Knopf: Freunde bearbeiten live mit, ihr seht euch gegenseitig tippen. Oder nur ansehen lassen.', 'Vorlagen-Knopf: Checkliste, Liste, Tabelle mit einem Klick. Eigene Seiten lassen sich als Vorlage speichern.', 'Excel- und Markdown-Dateien einfach reinziehen (Bilder neben der .md kommen über „Datei öffnen“ mit). „Ansehen“ macht es kompakt.'],
   },
   {
-    id: 'minispiele', title: 'Minispiele', img: 'minispiele', k: 'minispiele 2048 minesweeper snake reaktion bestenliste warten',
-    text: 'Für zwischendurch: 2048, Minesweeper, Snake und ein Reaktionstest. Auch im Overlay.',
-    tips: ['Deine Bestwerte stehen in einer Bestenliste mit deinen Freunden.'],
+    id: 'minispiele', title: 'Minispiele', img: 'minispiele', k: 'minispiele warten sudoku wortraten klötzchen sprinter flatterflug mauerbrecher lichtschalter farbcode paare memory tic tac toe vier gewinnt 2048 minesweeper snake brettspiele computer freund einladen bestenliste',
+    text: 'Für Wartezeiten im Spiel: alles läuft auch im Overlay, das Fenster lässt sich beliebig groß ziehen.',
+    tips: ['Solo: Sudoku, Wortraten (jeden Tag ein Wort für alle), Klötzchen, Sprinter, Flatterflug, Mauerbrecher, Lichtschalter, 2048, Minesweeper, Snake.', 'Multiplayer: Farbcode, Paare, Montagsmaler, Stille Post. Freund per Chat einladen oder direkt mit dem Anruf spielen.', 'Brettspiele: Tic-Tac-Toe und Vier in einer Reihe, gegen den Computer (leicht oder schwer) oder einen Freund.', 'Lieblingsspiel anheften (Nadel oben): kriegt einen eigenen Knopf im Overlay-Fächer. Bestwerte landen in einer Bestenliste mit deinen Freunden.'],
   },
   {
     id: 'timer', title: 'Timer & Stoppuhr', k: 'timer stoppuhr wecker alarm countdown runde zeit',

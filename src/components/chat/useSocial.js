@@ -191,13 +191,13 @@ export const useSocial = create((set, get) => ({
     const shown = status === 'online' && idle ? 'afk' : status
     const { call, callSince } = get()
     // only a tag of the chat's id: see callTag in useCall
-    presence.track({ name: me?.player_name || '', avatar: me?.avatar_url || null, game: game || null, status: shown, since: Date.now(), call: call ? callTag(call) : null, callSince: call ? callSince : 0 })
+    presence.track({ name: me?.player_name || '', avatar: me?.avatar_url || null, game: game || null, status: shown, since: Date.now(), call: call ? callTag(call) : null, callSince: call ? callSince : 0, ...(call && get().callGuest ? { callGuest: true } : {}) })
   },
 
   /** The call you are in (useCall): goes into your presence. */
-  setCall(convId) {
+  setCall(convId, guest = false) {
     if (get().call === convId) return
-    set({ call: convId || null, callSince: convId ? Date.now() : 0 })
+    set({ call: convId || null, callSince: convId ? Date.now() : 0, callGuest: !!(convId && guest) })
     get()._track()
   },
 
@@ -321,6 +321,8 @@ export const useSocial = create((set, get) => ({
 
   _onMessage(m) {
     const uid = get().session?.user?.id
+    // a friend brings you into their call: rings (useCall)
+    if (m.sender !== uid && m.payload?.call) get().onCallInvite?.(m)
     const list = get().messages[m.conversation_id]
     if (list && !list.some(x => x.id === m.id)) {
       set({ messages: { ...get().messages, [m.conversation_id]: [...list, m] } })
