@@ -8,6 +8,7 @@ import { api } from './shim'
 import { PersonAvatar, STATUS, ago, presenceStatus } from './Person'
 import { AttachButton, EmojiButton, Emote, EmoteSuggest, GifButton, InviteButton, InviteCard, LinkPreview, MediaMessage, emojiOnly, emoteSuggestions, onlyImage } from './Extras'
 import { emote, emotesOnly, withEmotes } from './emotes'
+import { messageEmotes, useEmotes } from './useEmotes'
 const load = (k, d) => { try { const r = localStorage.getItem('auch.' + k); return r == null ? d : JSON.parse(r) } catch { return d } }
 const save = (k, v) => { try { localStorage.setItem('auch.' + k, JSON.stringify(v)) } catch { /* blocked */ } }
 
@@ -15,15 +16,15 @@ const URL_RE = /(https?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]])/gi
 const GROUP_GAP = 5 * 60 * 1000
 
 /** Message text with clickable links (they open in the browser) and emotes as pictures. */
-function Text({ body }) {
+function Text({ body, own }) {
   const parts = body.split(URL_RE)
   return parts.map((p, i) => (i % 2 === 1
     ? <a key={i} href={p} onClick={e => { e.preventDefault(); api.openLink(p).catch(() => {}) }} className="underline decoration-white/40 underline-offset-2 hover:decoration-white break-all">{p}</a>
-    : <Fragment key={i}>{withEmotes(p).map((x, j) => (typeof x === 'string' ? <Fragment key={j}>{x}</Fragment> : <Emote key={j} e={x} />))}</Fragment>))
+    : <Fragment key={i}>{withEmotes(p, own).map((x, j) => (typeof x === 'string' ? <Fragment key={j}>{x}</Fragment> : <Emote key={j} e={x} />))}</Fragment>))
 }
 
 /** Text where lines starting with ">" are a quote block. */
-function Body({ body }) {
+function Body({ body, own }) {
   const blocks = []
   for (const line of body.split('\n')) {
     const q = /^>/.test(line)
@@ -32,10 +33,10 @@ function Body({ body }) {
     if (last && last.q === q) last.lines.push(text)
     else blocks.push({ q, lines: [text] })
   }
-  if (!blocks.some(b => b.q)) return <Text body={body} />
+  if (!blocks.some(b => b.q)) return <Text body={body} own={own} />
   return blocks.map((b, i) => (b.q
-    ? <div key={i} className="my-0.5 border-l-2 border-white/40 pl-2 text-[12.5px] opacity-80"><Text body={b.lines.join('\n')} /></div>
-    : <div key={i}><Text body={b.lines.join('\n')} /></div>))
+    ? <div key={i} className="my-0.5 border-l-2 border-white/40 pl-2 text-[12.5px] opacity-80"><Text body={b.lines.join('\n')} own={own} /></div>
+    : <div key={i}><Text body={b.lines.join('\n')} own={own} /></div>))
 }
 
 // Replies: the answered message travels along with yours (payload.reply) and shows above it.
@@ -62,10 +63,10 @@ function ReplyRef({ r, mine, onJump, gone }) {
 }
 
 /** A message of only emotes: big, without a bubble. */
-function BigEmotes({ body }) {
+function BigEmotes({ body, own }) {
   const words = body.trim().split(/\s+/)
   const size = words.length === 1 ? 56 : 44
-  return <div className="flex items-end gap-1">{words.map((w, i) => <Emote key={i} e={emote(w)} size={size} />)}</div>
+  return <div className="flex items-end gap-1">{words.map((w, i) => <Emote key={i} e={emote(w, own)} size={size} />)}</div>
 }
 
 function dayLabel(d) {
@@ -133,6 +134,7 @@ export default function ChatPanel({ compact = false, convId = null, autoFocus = 
   const onlineAll = useSocial(s => s.online)
   const friends = useSocial(s => s.friends)
   const uid = useSocial(s => s.session?.user?.id)
+  useEmotes(s => s.list) // own / friends' emotes for Tab completion
   const sending = useSocial(s => s.sending)
   const uploading = useSocial(s => s.uploading)
   const typingMap = useSocial(s => (id ? s.typing[id] : null))
@@ -386,14 +388,14 @@ export default function ChatPanel({ compact = false, convId = null, autoFocus = 
                         : m.payload?.call ? <CallCard m={m} mine={mine} />
                         : m.kind === 'media' ? <MediaMessage m={m} />
                         : emojiOnly(m.body) ? <div className={`leading-tight ${emojiOnly(m.body) === 1 ? 'text-[44px]' : 'text-[34px]'}`}>{m.body}</div>
-                        : emotesOnly(m.body) ? <BigEmotes body={m.body} />
+                        : emotesOnly(m.body, messageEmotes(m.payload)) ? <BigEmotes body={m.body} own={messageEmotes(m.payload)} />
                         : onlyImage(m.body) ? <LinkPreview body={m.body} />
                         : (
                           <>
                             <div className={`whitespace-pre-wrap break-words rounded-2xl px-3 py-[7px] text-[13px] leading-snug ${mine
                               ? 'bg-gradient-to-br from-brand-500 to-[#8a4cf0] text-white rounded-br-md'
                               : 'bg-white/[0.07] text-ink-100 rounded-bl-md'}`}>
-                              <Body body={m.body} />
+                              <Body body={m.body} own={messageEmotes(m.payload)} />
                             </div>
                             <LinkPreview body={m.body} />
                           </>

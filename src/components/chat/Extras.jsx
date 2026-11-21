@@ -1,11 +1,12 @@
 // Chat extras: emoji picker, previews for image / GIF / YouTube links, game invites.
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Gamepad2, ImagePlus, Loader2, Play, Smile, Volume2, VolumeX } from 'lucide-react'
+import { Gamepad2, ImagePlus, Loader2, Pencil, Play, Plus, Smile, Volume2, VolumeX } from 'lucide-react'
 import { gameState, useLauncher } from './shim'
 import { useSocial } from './useSocial'
 import { api } from './shim'
 import { EMOTES, emote } from './emotes'
+import { EMOTE_MAX, codeFromFile, customEmotes, prepareEmote, useEmotes } from './useEmotes'
 
 // ------------------------------------------------------------------ emojis
 const SETS = [
@@ -20,30 +21,59 @@ const RECENT = 'auch.emoji.recent'
 const loadRecent = () => { try { return JSON.parse(localStorage.getItem(RECENT)) || [] } catch { return [] } }
 
 /**
- * Smiley button: emojis by topic, Twitch-style emotes, and the last ones used.
+ * Smiley button: emojis by topic, emotes (yours, your friends', the Twitch ones),
+ * and the last ones used. Your own emotes are made and changed right here.
  * `onPick(text, word)`: word = true for an emote code (needs spaces around it).
  */
 export function EmojiButton({ onPick }) {
   const [open, setOpen] = useState(false)
   const [tab, setTab] = useState(() => (loadRecent().length ? -1 : 0))
   const [filter, setFilter] = useState('')
+  const [form, setForm] = useState(null) // { img, code } (new) or { edit } (yours)
+  const [editing, setEditing] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState(null)
   const box = useRef(null)
+  const fileRef = useRef(null)
   useEffect(() => {
     if (!open) return
-    const off = e => { if (!box.current?.contains(e.target)) setOpen(false) }
+    const off = e => { if (!box.current?.contains(e.target)) { setOpen(false); setForm(null); setEditing(false) } }
     window.addEventListener('mousedown', off)
     return () => window.removeEventListener('mousedown', off)
   }, [open])
-  const recent = loadRecent()
+  useEmotes(s => s.list) // new / renamed ones show right away
+  const missing = useEmotes(s => s.missing)
+  useEffect(() => { if (open) useEmotes.getState().load() }, [open])
+  const { groups, byCode } = customEmotes()
+  const find = e => emote(e, byCode)
+  // emote codes of people you're no longer friends with drop out
+  const recent = loadRecent().filter(e => find(e) || !/^[\w:]+$/.test(e))
   const EMOTE_TAB = SETS.length
   const q = filter.trim().toLowerCase()
-  const list = tab === -1 ? recent
-    : tab === EMOTE_TAB ? EMOTES.filter(e => !q || e.code.toLowerCase().includes(q)).map(e => e.code)
-    : SETS[tab][1]
+  const match = e => !q || e.code.toLowerCase().includes(q)
+  const sections = tab !== EMOTE_TAB ? [] : [
+    ...groups.map(g => ({ key: g.owner, name: g.name, mine: g.mine, items: g.items.filter(match) })).filter(g => g.items.length || (g.mine && !q && !missing)),
+    { key: 'twitch', name: 'Twitch', items: EMOTES.filter(match) },
+  ]
+  const list = tab === -1 ? recent : tab === EMOTE_TAB ? [] : SETS[tab][1]
   function pick(e) {
     try { localStorage.setItem(RECENT, JSON.stringify([e, ...recent.filter(x => x !== e)].slice(0, 24))) } catch { /* ignore */ }
-    onPick(e, !!emote(e))
+    onPick(e, !!find(e))
   }
+  async function chosen(f) {
+    window.__auchPicking = false
+    if (!f) return
+    setErr(null); setBusy(true)
+    try { const img = await prepareEmote(f); setForm({ img, code: codeFromFile(f.name) }) } catch (e) { setErr(e.message) } finally { setBusy(false) }
+  }
+  const mineCount = groups.find(g => g.mine)?.items.length || 0
+  const tile = (e, onClick, extra = null) => (
+    <button key={e.code} type="button" onClick={onClick} title={e.code}
+      className="relative grid h-11 place-items-center rounded-lg leading-none hover:bg-white/[0.08]">
+      <img src={e.url} alt={e.code} loading="lazy" className="max-h-8 max-w-[40px]" />
+      {extra}
+    </button>
+  )
   return (
     <div ref={box} className="relative">
       <button type="button" onClick={() => setOpen(o => !o)} title="Emojis und Emotes"
@@ -51,30 +81,114 @@ export function EmojiButton({ onPick }) {
         <Smile size={17} />
       </button>
       {open && (
-        <div className="card absolute bottom-full right-0 z-40 mb-2 w-[300px] bg-ink-800/95 p-2 shadow-lift">
+        <div className="card absolute bottom-full right-0 z-40 mb-2 w-[300px] max-w-[calc(100vw-24px)] bg-ink-800/95 p-2 shadow-lift">
           <div className="mb-1.5 flex gap-1 overflow-x-auto">
             {recent.length > 0 && <TabBtn on={tab === -1} onClick={() => setTab(-1)}>Zuletzt</TabBtn>}
             <TabBtn on={tab === EMOTE_TAB} onClick={() => setTab(EMOTE_TAB)}>Emotes</TabBtn>
             {SETS.map(([name], i) => <TabBtn key={name} on={tab === i} onClick={() => setTab(i)}>{name}</TabBtn>)}
           </div>
-          {tab === EMOTE_TAB && (
+          {tab === EMOTE_TAB && form ? (
+            <EmoteForm {...form} onDone={() => setForm(null)} />
+          ) : tab === EMOTE_TAB ? (<>
             <input autoFocus value={filter} onChange={e => setFilter(e.target.value)} placeholder="Emote suchen (KEKW, Pog …)"
               className="mb-1.5 h-8 w-full rounded-lg border border-white/10 bg-white/[0.05] px-2.5 text-[12.5px] text-white outline-none focus-visible:outline-none placeholder:text-ink-500 focus:border-brand-400" />
+            {err && <p className="mb-1.5 rounded-lg bg-rose-500/10 px-2 py-1 text-[11.5px] text-rose-200">{err}</p>}
+            <div className="overflow-y-auto" style={{ maxHeight: Math.max(130, Math.min(260, 420 - 96)) }}>
+              {sections.map(sec => (
+                <section key={sec.key} className="mb-1.5">
+                  <div className="flex h-6 items-center gap-2 px-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-500">
+                    <span className="min-w-0 flex-1 truncate">{sec.name}</span>
+                    {sec.mine && <span className="tabular-nums normal-case tracking-normal">{mineCount}/{EMOTE_MAX}</span>}
+                    {sec.mine && mineCount > 0 && (
+                      <button type="button" onClick={() => setEditing(v => !v)} className={`normal-case tracking-normal ${editing ? 'text-brand-300' : 'hover:text-white'}`}>{editing ? 'Fertig' : 'Bearbeiten'}</button>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-6 gap-0.5">
+                    {sec.items.map(e => (sec.mine && editing
+                      ? tile(e, () => setForm({ edit: e }), <span className="absolute right-0.5 top-0.5 grid h-4 w-4 place-items-center rounded bg-ink-950/80 text-white"><Pencil size={9} /></span>)
+                      : tile(e, () => pick(e.code))))}
+                    {sec.mine && !q && mineCount < EMOTE_MAX && (
+                      <button type="button" disabled={busy} title="Eigenes Emote hochladen (PNG, JPG, WebP oder GIF)"
+                        onClick={() => { setErr(null); window.__auchPicking = true; fileRef.current?.click() }}
+                        className="grid h-11 place-items-center rounded-lg border border-dashed border-white/15 text-ink-400 hover:border-brand-400 hover:text-white">
+                        {busy ? <Loader2 size={15} className="animate-spin" /> : <Plus size={16} />}
+                      </button>
+                    )}
+                  </div>
+                  {sec.mine && !mineCount && !q && <p className="px-1 pt-1 text-[11px] leading-snug text-ink-500">Lad eigene hoch. Du und deine Freunde könnt sie dann benutzen.</p>}
+                </section>
+              ))}
+              {missing && !q && <p className="px-1 pb-1 text-[11px] text-ink-500">Eigene Emotes gehen, sobald die Datenbank so weit ist.</p>}
+              {q && sections.every(sec => !sec.items.length) && <p className="p-2 text-[12px] text-ink-400">Kein Emote mit dem Namen.</p>}
+            </div>
+            <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden
+              onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; chosen(f) }} />
+          </>) : (
+            <div className="grid grid-cols-8 gap-0.5 overflow-y-auto" style={{ maxHeight: Math.max(110, Math.min(224, 420 - 96)) }}>
+              {list.map(e => {
+                const em = find(e)
+                return (
+                  <button key={e} type="button" onClick={() => pick(e)} title={em ? e : undefined}
+                    className={`grid place-items-center rounded-lg leading-none hover:bg-white/[0.08] ${em ? 'h-11' : 'h-9 text-[20px]'}`}>
+                    {em ? <img src={em.url} alt={e} loading="lazy" className="max-h-8 max-w-[34px]" /> : e}
+                  </button>
+                )
+              })}
+            </div>
           )}
-          <div className={`grid max-h-56 gap-0.5 overflow-y-auto ${tab === EMOTE_TAB ? 'grid-cols-6' : 'grid-cols-8'}`}>
-            {list.map(e => {
-              const em = emote(e)
-              return (
-                <button key={e} type="button" onClick={() => pick(e)} title={em ? e : undefined}
-                  className={`grid place-items-center rounded-lg leading-none hover:bg-white/[0.08] ${em ? 'h-11' : 'h-9 text-[20px]'}`}>
-                  {em ? <img src={em.url} alt={e} loading="lazy" className="max-h-8 max-w-[40px]" /> : e}
-                </button>
-              )
-            })}
-            {tab === EMOTE_TAB && list.length === 0 && <p className="col-span-6 p-2 text-[12px] text-ink-400">Kein Emote mit dem Namen.</p>}
-          </div>
         </div>
       )}
+    </div>
+  )
+}
+
+/** Name a new emote, or rename / delete one of yours. `onDone(code | null | undefined)`. */
+export function EmoteForm({ img, edit, code: first = '', onDone }) {
+  const [code, setCode] = useState(edit ? edit.code : first)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+  const [sure, setSure] = useState(false)
+  const done = v => { if (img?.url) URL.revokeObjectURL(img.url); onDone(v) }
+  async function save() {
+    if (busy) return
+    setBusy(true); setError(null)
+    try {
+      if (edit) { if (code !== edit.code) await useEmotes.getState().rename(edit.id, code) } else await useEmotes.getState().add(img, code)
+      done(code)
+    } catch (e) { setError(e.message); setBusy(false) }
+  }
+  async function del() {
+    if (!sure) { setSure(true); setTimeout(() => setSure(false), 3000); return }
+    setBusy(true); setError(null)
+    try { await useEmotes.getState().remove(edit.id); onDone(null) } catch (e) { setError(e.message); setBusy(false) }
+  }
+  return (
+    <div className="rounded-xl border border-white/[0.08] bg-white/[0.03] p-2.5">
+      <div className="flex items-center gap-3">
+        <span className="grid h-14 w-14 shrink-0 place-items-center rounded-lg bg-white/[0.05]">
+          <img src={edit ? edit.url : img.url} alt="" className="max-h-12 max-w-[52px]" />
+        </span>
+        <label className="min-w-0 flex-1">
+          <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-500">Name</span>
+          <input autoFocus value={code} placeholder="z. B. hypeKatze"
+            onChange={e => setCode(e.target.value.replace(/[^A-Za-z0-9_]/g, '').slice(0, 24))}
+            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); save() } }}
+            className="mt-0.5 h-8 w-full rounded-lg border border-white/10 bg-white/[0.05] px-2.5 text-[13px] text-white outline-none focus-visible:outline-none placeholder:text-ink-500 focus:border-brand-400" />
+        </label>
+      </div>
+      {error ? <p className="mt-2 text-[11.5px] leading-snug text-rose-200">{error}</p>
+        : !edit && <p className="mt-2 text-[11px] leading-snug text-ink-500">{img.animated ? 'Bewegt sich. ' : ''}Am besten ein Name, den man nicht aus Versehen schreibt. Groß und klein zählt.</p>}
+      <div className="mt-2 flex items-center gap-1.5">
+        {edit && (
+          <button type="button" onClick={del} disabled={busy}
+            className={`h-7 rounded-lg px-2.5 text-[12px] font-semibold ${sure ? 'bg-rose-500 text-white' : 'text-rose-300 hover:bg-rose-500/10'}`}>{sure ? 'Wirklich löschen?' : 'Löschen'}</button>
+        )}
+        <div className="flex-1" />
+        <button type="button" onClick={() => done(undefined)} className="btn-ghost inline-flex h-7 items-center rounded-lg px-2.5 text-[12px] font-semibold">Abbrechen</button>
+        <button type="button" onClick={save} disabled={busy || code.length < 2} className="btn-brand inline-flex h-7 min-w-[78px] items-center justify-center rounded-lg px-3 text-[12px] font-semibold disabled:opacity-50">
+          {busy ? <Loader2 size={13} className="mx-auto animate-spin" /> : 'Speichern'}
+        </button>
+      </div>
     </div>
   )
 }
@@ -88,7 +202,7 @@ export function emoteSuggestions(text, caret) {
   const m = text.slice(0, caret).match(/(?:^|\s)(:?)([^\s:]{2,})$/)
   if (!m) return { word: '', list: [], show: false }
   const w = m[2].toLowerCase()
-  const list = EMOTES.filter(e => e.code.toLowerCase().startsWith(w) && (m[1] || e.code !== m[2])).slice(0, 7)
+  const list = [...customEmotes().flat, ...EMOTES].filter(e => e.code.toLowerCase().startsWith(w) && (m[1] || e.code !== m[2])).slice(0, 7)
   return { word: m[1] + m[2], list, show: !!m[1] && list.length > 0 }
 }
 
@@ -110,7 +224,9 @@ export function EmoteSuggest({ list, active, onPick }) {
 
 /** One emote inside a message. */
 export function Emote({ e, size = 28 }) {
-  return <img src={e.url} alt={e.code} title={e.code} loading="lazy" className="inline-block align-middle" style={{ height: size, maxWidth: size * 2.2, margin: '-4px 1px' }} />
+  const [gone, setGone] = useState(false)
+  if (gone) return <>{e.code}</>
+  return <img src={e.url} alt={e.code} title={e.code} loading="lazy" onError={() => setGone(true)} className="inline-block align-middle" style={{ height: size, maxWidth: size * 2.2, margin: '-4px 1px' }} />
 }
 
 function TabBtn({ on, onClick, children }) {

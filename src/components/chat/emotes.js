@@ -113,15 +113,17 @@ export const EMOTES = LIST
   .map(({ i, ...e }) => e)
 const BY_CODE = new Map(EMOTES.map(e => [e.code, e]))
 
-export const emote = word => BY_CODE.get(word) || null
+// `own`: emotes people made themselves (Map code -> emote), e.g. the ones a message
+// brought along. The Twitch ones always win, so nobody can paint over KEKW.
+export const emote = (word, own) => BY_CODE.get(word) || own?.get(word) || null
 
 /** Splits plain text into strings and emotes: ["gg ", {code, url}, " wp"]. */
-export function withEmotes(text) {
+export function withEmotes(text, own) {
   if (!text) return []
   const out = []
   let buf = ''
   for (const part of text.split(/(\s+)/)) {
-    const e = BY_CODE.get(part)
+    const e = BY_CODE.get(part) || own?.get(part)
     if (e) { if (buf) out.push(buf); buf = ''; out.push(e) } else buf += part
   }
   if (buf) out.push(buf)
@@ -129,8 +131,8 @@ export function withEmotes(text) {
 }
 
 /** 1-3 when the message is nothing but emotes, so it can be shown big; else 0. */
-export function emotesOnly(text) {
+export function emotesOnly(text, own) {
   const words = text.trim().split(/\s+/).filter(Boolean)
   if (!words.length || words.length > 3) return 0
-  return words.every(w => BY_CODE.has(w)) ? words.length : 0
+  return words.every(w => BY_CODE.has(w) || own?.has(w)) ? words.length : 0
 }

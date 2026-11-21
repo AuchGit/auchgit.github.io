@@ -109,6 +109,8 @@ export const useSocial = create((set, get) => ({
   tracks: true,  // false in the overlays: only the launcher window tells the others you're online
   /** Set by the app: sounds for new messages, requests, friends coming online. */
   onEvent: null,
+  /** Set by useEmotes: the own emotes a message uses ({ code: path }). */
+  emotesIn: null,
 
   // ------------------------------------------------------------------ lifecycle
   async init() {
@@ -586,9 +588,12 @@ export const useSocial = create((set, get) => ({
     const text = body.trim()
     if (!chat || !text) return
     set({ sending: true })
+    // own emotes in the text travel along, so everyone in the chat sees them
+    const emotes = (extra.kind || 'text') === 'text' ? get().emotesIn?.(text) : null
+    const payload = emotes ? { ...(extra.payload || {}), emotes } : extra.payload || null
     const { data, error } = await supabase
       .from('social_messages')
-      .insert({ conversation_id: chat.convId, sender: get().session.user.id, body: text.slice(0, 2000), kind: extra.kind || 'text', payload: extra.payload || null })
+      .insert({ conversation_id: chat.convId, sender: get().session.user.id, body: text.slice(0, 2000), kind: extra.kind || 'text', payload })
       .select('id, conversation_id, sender, kind, body, payload, created_at')
       .single()
     set({ sending: false })
