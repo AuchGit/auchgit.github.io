@@ -3,6 +3,7 @@ import { CornerUpLeft, LogOut, Loader2, MoreHorizontal, Phone, Quote, SendHorizo
 import { useSocial } from './useSocial'
 import { useLauncher } from './shim'
 import { CallButtons, CallInChat } from './Call'
+import { LiveBanner, LiveCard } from './Live'
 import { useCall } from './useCall'
 import { api } from './shim'
 import { PersonAvatar, STATUS, ago, presenceStatus } from './Person'
@@ -329,6 +330,7 @@ export default function ChatPanel({ compact = false, convId = null, autoFocus = 
       </div>}
       {!compact && <CallInChat convId={id} />}
 
+      {!group && <LiveBanner userId={friend?.user_id} />}
       <div ref={scroller} onScroll={e => {
         const el = e.currentTarget
         stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60
@@ -386,6 +388,7 @@ export default function ChatPanel({ compact = false, convId = null, autoFocus = 
                       {m.kind === 'deleted' ? <div className="rounded-2xl border border-white/[0.07] px-3 py-[6px] text-[12.5px] italic text-ink-500">Nachricht gelöscht</div>
                         : m.kind === 'invite' ? <InviteCard m={m} mine={mine} who={who?.player_name} />
                         : m.payload?.call ? <CallCard m={m} mine={mine} />
+                        : m.payload?.live ? <LiveCard m={m} mine={mine} />
                         : m.kind === 'media' ? <MediaMessage m={m} />
                         : emojiOnly(m.body) ? <div className={`leading-tight ${emojiOnly(m.body) === 1 ? 'text-[44px]' : 'text-[34px]'}`}>{m.body}</div>
                         : emotesOnly(m.body, messageEmotes(m.payload)) ? <BigEmotes body={m.body} own={messageEmotes(m.payload)} />

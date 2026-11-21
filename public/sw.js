@@ -20,7 +20,7 @@ self.addEventListener('push', e => {
       badge: '/icons/badge-96.png',
       vibrate: d.call ? [400, 200, 400, 200, 400] : [120, 60, 120],
       requireInteraction: !!d.call,
-      data: { url: d.url || '/app/', conv: d.conv || null, call: !!d.call },
+      data: { url: d.url || '/app/', conv: d.conv || null, call: !!d.call, live: d.live || null },
     })
   })())
 })
@@ -35,7 +35,8 @@ self.addEventListener('notificationclick', e => {
     const open = wins.find(w => path(w).startsWith('/app')) || wins.find(w => path(w).startsWith('/chat'))
     if (open) {
       await open.focus()
-      open.postMessage({ type: 'open-chat', conv: data.conv, call: data.call })
+      if (data.live) open.postMessage({ type: 'open-live', host: data.live })
+      else open.postMessage({ type: 'open-chat', conv: data.conv, call: data.call })
       return
     }
     await self.clients.openWindow(url)

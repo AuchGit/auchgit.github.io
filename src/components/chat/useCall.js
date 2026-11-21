@@ -13,8 +13,6 @@
 //     { streamId: 'voice' | 'stream' | 'cam' | 'screen' | 'board' }.
 //   * Soundboard: your own uploaded sounds (lib/soundboard.js) go out on their
 //     own line ('board'); each listener has one volume for your soundboard.
-//   * Program sound comes from Rust (audio.rs, 16-bit stereo 48 kHz) through an
-//     AudioWorklet into a MediaStream.
 //
 // Website copy of the launcher's call store (same channels, so launcher and
 // browser talk to each other). No program sound here: that needs the desktop
@@ -242,7 +240,8 @@ export const useCall = create((set, get) => ({
     for (const id of [...peers.keys()]) get()._drop(id)
     if (get().sharing) get().shareProgram(null).catch(() => {})
     get().stopBoard()
-    for (const s of [local.micRaw, local.camStream, local.progStream, ...local.screens.values()]) s?.getTracks().forEach(t => t.stop())
+    // (program sound is shared with going live: shareProgram(null) above gives it back)
+    for (const s of [local.micRaw, local.camStream, ...local.screens.values()]) s?.getTracks().forEach(t => t.stop())
     local.screens.clear()
     try { local.micSource?.disconnect() } catch { /* gone */ }
     Object.assign(local, { micRaw: null, micSource: null, progStream: null, progNode: null, camStream: null })

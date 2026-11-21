@@ -13,6 +13,8 @@ import { useCall } from './useCall'
 import { CallDock, CallModes, CallPage, CallRing, LiveBadge } from './Call'
 import { playEvent, playSound } from './sounds'
 import { registerWorker } from './push'
+import { LiveDock } from './Live'
+import { useLive } from './useLive'
 import { PushBanner } from './PushBits'
 import AuthForm from '../account/AuthForm.jsx'
 
@@ -86,8 +88,18 @@ export default function ChatApp({ app = false }) {
   // A tapped notification (or ?c=…) opens that chat once the list is there.
   const convs = useSocial(s => s.convs)
   const [pending, setPending] = useState(() => { try { return new URLSearchParams(location.search).get('c') } catch { return null } })
+  // "X ist live" tapped: offer to come in (a tap starts the sound, phones want that)
   useEffect(() => {
-    const on = e => { if (e.data?.type === 'open-chat' && e.data.conv) setPending(e.data.conv) }
+    try {
+      const host = new URLSearchParams(location.search).get('live')
+      if (host) { useLive.setState({ invite: host }); history.replaceState(null, '', location.pathname) }
+    } catch { /* no address */ }
+  }, [])
+  useEffect(() => {
+    const on = e => {
+      if (e.data?.type === 'open-chat' && e.data.conv) setPending(e.data.conv)
+      if (e.data?.type === 'open-live' && e.data.host) useLive.setState({ invite: e.data.host })
+    }
     navigator.serviceWorker?.addEventListener('message', on)
     return () => navigator.serviceWorker?.removeEventListener('message', on)
   }, [])
@@ -150,6 +162,7 @@ export default function ChatApp({ app = false }) {
       {createPortal(
         <>
           <CallDock />
+          <LiveDock />
           <div className={`fixed right-4 z-50 ${app ? 'top-[calc(env(safe-area-inset-top)+0.75rem)] left-4 sm:left-auto' : 'top-20'}`}><CallRing /></div>
           <div className={`fixed left-1/2 z-50 -translate-x-1/2 ${app ? 'top-[calc(env(safe-area-inset-top)+0.5rem)]' : 'top-[4.5rem]'}`}><LiveBadge /></div>
           {note && <div className="fixed bottom-4 right-4 z-50 rounded-xl border border-white/[0.08] bg-ink-900/95 px-4 py-2.5 text-[13px] shadow-lift animate-pop">{note}</div>}

@@ -103,6 +103,7 @@ export const useSocial = create((set, get) => ({
   older: {},      // convId -> 'loading' | 'done' (scrolled back to the first message) | null
   call: null,     // convId of the call you are in (others in that chat see it and can join)
   callSince: 0,
+  live: null,     // while you are live: { since, video, audio, title } (useLive), friends see it
   watching: [], // chats someone is looking at right now (overlay windows): new messages there count as read
   status: load('status', 'online'),
   idle: false,   // no input for a while: shown as "afk" while the status is "online"
@@ -163,7 +164,11 @@ export const useSocial = create((set, get) => ({
       .on('presence', { event: 'sync' }, () => {
         const prev = get().online
         const online = {}
-        for (const [id, metas] of Object.entries(presence.presenceState())) online[id] = metas.find(m => m.game) || metas[metas.length - 1] || {}
+        for (const [id, metas] of Object.entries(presence.presenceState())) {
+          const m = metas.find(x => x.game) || metas[metas.length - 1] || {}
+          const live = metas.find(x => x.live)?.live
+          online[id] = live && !m.live ? { ...m, live } : m
+        }
         set({ online })
         get()._presenceEvents(prev, online)
       })
@@ -193,7 +198,14 @@ export const useSocial = create((set, get) => ({
     const shown = status === 'online' && idle ? 'afk' : status
     const { call, callSince } = get()
     // only a tag of the chat's id: see callTag in useCall
-    presence.track({ name: me?.player_name || '', avatar: me?.avatar_url || null, game: game || null, status: shown, since: Date.now(), call: call ? callTag(call) : null, callSince: call ? callSince : 0, ...(call && get().callGuest ? { callGuest: true } : {}) })
+    const live = get().live
+    presence.track({ name: me?.player_name || '', avatar: me?.avatar_url || null, game: game || null, status: shown, since: Date.now(), call: call ? callTag(call) : null, callSince: call ? callSince : 0, ...(call && get().callGuest ? { callGuest: true } : {}), ...(live ? { live } : {}) })
+  },
+
+  /** Live (see useLive) or not (null): goes into your presence, friends can come watch. */
+  setLive(live) {
+    set({ live: live || null })
+    get()._track()
   },
 
   /** The call you are in (useCall): goes into your presence. */
@@ -213,6 +225,7 @@ export const useSocial = create((set, get) => ({
     for (const [id, p] of Object.entries(next)) {
       const f = id !== uid && friend(id)
       if (!f) continue
+      if (p.live && !prev[id]?.live) get().onEvent('live', { userId: id, name: f.player_name, title: p.live.title || '' })
       if (!prev[id] && now - (leftAt[id] || 0) > 120000) get().onEvent('online', { userId: id, name: f.player_name })
       else if (prev[id] && p.game && p.game !== prev[id].game) get().onEvent('playing', { userId: id, name: f.player_name, game: p.game })
     }

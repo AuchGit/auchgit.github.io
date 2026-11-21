@@ -1,8 +1,10 @@
 import { useMemo, useRef, useState } from 'react'
-import { ChevronRight, Copy, Check, LogOut, MessageSquarePlus, Globe, MoreHorizontal, Plus, UserPlus, UserRound, X, Loader2 } from 'lucide-react'
+import { Radio, ChevronRight, Copy, Check, LogOut, MessageSquarePlus, Globe, MoreHorizontal, Plus, UserPlus, UserRound, X, Loader2 } from 'lucide-react'
 import { GroupAvatar } from './ChatPanel'
 import { useSocial } from './useSocial'
 import { PushMenuItem } from './PushBits'
+import { GoLive, LiveNow } from './Live'
+import { useLive } from './useLive'
 import { disablePush } from './push'
 import { useLauncher } from './shim'
 import { PersonAvatar, Badge, STATUS, ago, ownStatus, presenceStatus } from './Person'
@@ -61,6 +63,8 @@ export function StatusMenu({ onClose, className = 'absolute left-3 top-14 z-30 w
 }
 
 export default function FriendsPanel({ onCollapse }) {
+  const [goLive, setGoLive] = useState(false)
+  const liveOn = useLive(s => !!s.live)
   const me = useSocial(s => s.me)
   const friends = useSocial(s => s.friends)
   const online = useSocial(s => s.online)
@@ -136,7 +140,9 @@ export default function FriendsPanel({ onCollapse }) {
             <span className="block truncate text-[12px] text-ink-400 group-hover:text-ink-200">{game && status === 'online' && !idle ? <>spielt <span className="text-brand-300">{game}</span></> : STATUS[ownStatus(status, game, idle)]?.label || 'Online'}</span>
           </span>
         </button>
+        <button className={`grid h-8 w-8 place-items-center rounded-lg hover:bg-white/[0.07] ${liveOn ? 'text-rose-400' : 'text-ink-300 hover:text-white'}`} onClick={() => (liveOn ? useLive.setState({ dockOpen: true }) : setGoLive(g => !g))} title={liveOn ? 'Du bist live' : 'Live gehen'}><Radio size={17} /></button>
         <button className="grid h-8 w-8 place-items-center rounded-lg text-ink-300 hover:bg-white/[0.07] hover:text-white" onClick={() => setMenu(m => !m)} title="Mehr"><MoreHorizontal size={17} /></button>
+        {goLive && !liveOn && <div className="card absolute right-3 top-12 z-30 w-[min(300px,calc(100vw-2rem))] bg-ink-800/95 p-1.5 shadow-lift"><GoLive onDone={() => setGoLive(false)} /></div>}
         {menu && <Menu onClose={() => setMenu(false)} />}
         {picking && <StatusMenu onClose={() => setPicking(false)} />}
       </div>
@@ -181,6 +187,7 @@ export default function FriendsPanel({ onCollapse }) {
 
       {/* lists */}
       <div className="min-h-0 flex-1 overflow-y-auto pb-4">
+        <LiveNow className="mx-2 mt-2 rounded-xl border border-rose-400/20 bg-rose-500/[0.05] p-1.5" />
         {groups.incoming.length > 0 && (
           <Section title="Anfragen" count={groups.incoming.length}>
             {groups.incoming.map(p => (
