@@ -206,6 +206,8 @@ export const useCall = create((set, get) => ({
     if (guest) setTimeout(() => { if (get().call?.convId === convId && !Object.keys(get().members).length) { get().onNotice?.('Der Anruf ist schon vorbei.'); get().leave() } }, 9000)
     clearTimeout(ringOutTimer)
     if (calling) {
+      // phones of the others ring too (push notification, if they turned it on)
+      supabase.functions.invoke('push', { body: { type: 'call', conv: convId } }).catch(() => {})
       ringOutTimer = setTimeout(() => {
         if (!get().outgoing || get().call?.convId !== convId) return
         if (kind === 'direct') { get().onNotice?.(`${title} geht nicht ran.`); get().leave() }

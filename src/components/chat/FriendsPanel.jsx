@@ -2,6 +2,8 @@ import { useMemo, useRef, useState } from 'react'
 import { ChevronRight, Copy, Check, LogOut, MessageSquarePlus, Globe, MoreHorizontal, Plus, UserPlus, UserRound, X, Loader2 } from 'lucide-react'
 import { GroupAvatar } from './ChatPanel'
 import { useSocial } from './useSocial'
+import { PushMenuItem } from './PushBits'
+import { disablePush } from './push'
 import { useLauncher } from './shim'
 import { PersonAvatar, Badge, STATUS, ago, ownStatus, presenceStatus } from './Person'
 
@@ -31,8 +33,9 @@ function Menu({ onClose }) {
     <div className="card absolute right-3 top-12 z-30 w-56 bg-ink-800/95 p-1.5 shadow-lift">
       <button className={item} onClick={() => { onClose(); location.href = '/konto/' }}><Globe size={15} /> Profil bearbeiten</button>
       <button className={item} onClick={() => { onClose(); location.href = '/feedback/' }}><MessageSquarePlus size={15} /> Feedback senden</button>
+      <PushMenuItem className={item} onDone={onClose} />
       <div className="my-1 h-px bg-white/[0.06]" />
-      <button className={`${item} text-rose-200`} onClick={() => { onClose(); signOut() }}><LogOut size={15} /> Ausloggen</button>
+      <button className={`${item} text-rose-200`} onClick={async () => { onClose(); await disablePush().catch(() => {}); signOut() }}><LogOut size={15} /> Ausloggen</button>
     </div>
   )
 }

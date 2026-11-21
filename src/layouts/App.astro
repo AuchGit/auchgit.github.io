@@ -1,0 +1,50 @@
+---
+// The installable phone app (/app/): whole screen, no site navigation.
+import '../styles/global.css'
+const { title = 'Chat' } = Astro.props
+---
+<!doctype html>
+<html lang="de" class="h-full">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
+    <title>{title} · AuchGit</title>
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="theme-color" content="#0b0c11" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="AuchGit" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <script is:inline>
+      // keep the browser's "install" offer for our own button
+      window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault(); window.__auchInstall = e; window.dispatchEvent(new Event('auch-install')) });
+      // a page cached from before an update may ask for scripts that are gone: reload once
+      (function () {
+        function reloadOnce() {
+          try {
+            var last = +sessionStorage.getItem('auch.reloaded') || 0
+            if (Date.now() - last < 30000) return
+            sessionStorage.setItem('auch.reloaded', String(Date.now()))
+          } catch (e) {}
+          location.reload()
+        }
+        window.addEventListener('unhandledrejection', function (e) {
+          var m = String((e.reason && e.reason.message) || e.reason || '')
+          if (/dynamically imported module|Importing a module script failed|error loading dynamically imported/i.test(m)) reloadOnce()
+        })
+        window.addEventListener('error', function (e) {
+          var t = e.target
+          if (t && t.tagName === 'SCRIPT' && /\/_astro\//.test(t.src || '')) reloadOnce()
+        }, true)
+      })()
+    </script>
+  </head>
+  <body class="h-full overflow-hidden bg-ink-950">
+    <div class="h-[100dvh] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] pt-[env(safe-area-inset-top)]">
+      <slot />
+    </div>
+  </body>
+</html>

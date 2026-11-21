@@ -4,7 +4,7 @@ import Nav from '../components/Nav.astro'
 import Footer from '../components/Footer.astro'
 import { site } from '../lib/site.js'
 
-const { title, description = site.intro, image = '/art/dissonance.jpg', accent = '#8f82ff' } = Astro.props
+const { title, description = site.intro, image = '/art/dissonance.jpg', accent = '#8f82ff', installable = false } = Astro.props
 const fullTitle = title ? `${title} · ${site.brand}` : site.brand
 const canonical = new URL(Astro.url.pathname, Astro.site)
 const ogImage = new URL(image, Astro.site)
@@ -19,6 +19,12 @@ const ogImage = new URL(image, Astro.site)
     <link rel="canonical" href={canonical} />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="theme-color" content="#0b0c11" />
+    {installable && <link rel="manifest" href="/manifest.webmanifest" />}
+    {installable && <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />}
+    {installable && <script is:inline>
+      // keep the browser's "install" offer for our own button (chat page)
+      window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault(); window.__auchInstall = e; window.dispatchEvent(new Event('auch-install')) })
+    </script>}
     <!-- for friends: keep it out of search engines -->
     <meta name="robots" content="noindex, nofollow" />
     <meta property="og:type" content="website" />

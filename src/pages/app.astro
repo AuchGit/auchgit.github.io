@@ -1,0 +1,9 @@
+---
+// The chat as an app for the phone: add to the home screen, notifications for new
+// messages and calls (see components/chat/push.js).
+import App from '../layouts/App.astro'
+import ChatApp from '../components/chat/ChatApp.jsx'
+---
+<App title="Chat">
+  <ChatApp app client:only="react" />
+</App>

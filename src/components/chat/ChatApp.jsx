@@ -12,6 +12,19 @@ import { GroupModal } from './GroupModal'
 import { useCall } from './useCall'
 import { CallDock, CallModes, CallPage, CallRing, LiveBadge } from './Call'
 import { playEvent, playSound } from './sounds'
+import { registerWorker } from './push'
+import { PushBanner } from './PushBits'
+import AuthForm from '../account/AuthForm.jsx'
+
+/** Opens a conversation by id (from a tapped notification or ?c= in the address). */
+function openConv(id) {
+  const s = useSocial.getState()
+  const c = s.convs.find(x => x.id === id)
+  if (!c) return false
+  if (c.kind === 'group') s.openGroup(c).catch(() => {})
+  else s.openChat(s.friends.find(f => f.user_id === c.other_id) || { user_id: c.other_id, player_name: c.title }).catch(() => {})
+  return true
+}
 
 const notify = (title, body) => {
   if (document.visibilityState === 'visible' && document.hasFocus()) return
@@ -57,7 +70,8 @@ function Modals() {
   return null
 }
 
-export default function ChatApp() {
+/** `app`: the installable phone app (/app/): whole screen, login right here. */
+export default function ChatApp({ app = false }) {
   const enabled = useSocial(s => s.enabled)
   const session = useSocial(s => s.session)
   const chat = useSocial(s => s.chat)
@@ -67,7 +81,20 @@ export default function ChatApp() {
   const [note, setNote] = useState(null)
   useEffect(() => { if (!note) return; const t = setTimeout(() => setNote(null), 5000); return () => clearTimeout(t) }, [note])
 
-  useEffect(() => { useSocial.getState().init() }, [])
+  useEffect(() => { useSocial.getState().init(); registerWorker() }, [])
+
+  // A tapped notification (or ?c=…) opens that chat once the list is there.
+  const convs = useSocial(s => s.convs)
+  const [pending, setPending] = useState(() => { try { return new URLSearchParams(location.search).get('c') } catch { return null } })
+  useEffect(() => {
+    const on = e => { if (e.data?.type === 'open-chat' && e.data.conv) setPending(e.data.conv) }
+    navigator.serviceWorker?.addEventListener('message', on)
+    return () => navigator.serviceWorker?.removeEventListener('message', on)
+  }, [])
+  useEffect(() => {
+    if (!pending || !session) return
+    if (openConv(pending)) { setPending(null); history.replaceState(null, '', location.pathname) }
+  }, [pending, convs, session])
 
   // Unread count in the tab title, like other chat apps.
   useEffect(() => {
@@ -75,14 +102,21 @@ export default function ChatApp() {
     document.title = `${n ? `(${n}) ` : ''}Chat · AuchGit`
   }, [incoming, unread])
 
-  // Ask for browser notifications once someone actually uses the chat.
-  useEffect(() => {
-    if (!chat || !('Notification' in window) || Notification.permission !== 'default') return
-    Notification.requestPermission().catch(() => {})
-  }, [chat])
 
   if (!enabled) return <p className="text-ink-300">Chat ist hier gerade nicht verfügbar.</p>
   if (session === undefined) return <div className="grid h-64 place-items-center text-ink-500"><Loader2 className="animate-spin" /></div>
+  if (!session && app) {
+    return (
+      <div className="h-full overflow-y-auto px-5 py-10">
+        <div className="mx-auto max-w-sm">
+          <img src="/icons/app-192.png" alt="" className="h-14 w-14" />
+          <h1 className="mt-4 font-display text-2xl font-semibold">AuchGit Chat</h1>
+          <p className="mt-1 text-[14px] text-ink-300">Freunde, Chat und Anrufe. Einmal mit deinem AuchGit-Account einloggen.</p>
+          <div className="mt-6"><AuthForm /></div>
+        </div>
+      </div>
+    )
+  }
   if (!session) {
     return (
       <div className="card mx-auto max-w-md p-8 text-center">
@@ -95,9 +129,10 @@ export default function ChatApp() {
   }
 
   return (
-    <div className="card flex h-[calc(100dvh-7.5rem)] min-h-[480px] overflow-hidden">
-      <aside className={`h-full w-full shrink-0 border-r border-white/[0.06] md:w-[320px] ${chat ? 'hidden md:block' : ''}`}>
-        <FriendsPanel />
+    <div className={app ? 'flex h-full overflow-hidden' : 'card flex h-[calc(100dvh-7.5rem)] min-h-[480px] overflow-hidden'}>
+      <aside className={`h-full w-full shrink-0 flex-col border-r border-white/[0.06] md:flex md:w-[320px] ${chat ? 'hidden' : 'flex'}`}>
+        <PushBanner app={app} />
+        <div className="min-h-0 flex-1"><FriendsPanel /></div>
       </aside>
       <section className={`h-full min-w-0 flex-1 ${chat ? '' : 'hidden md:block'}`}>
         {chat ? <ChatPanel /> : (
@@ -115,10 +150,10 @@ export default function ChatApp() {
       {createPortal(
         <>
           <CallDock />
-          <div className="fixed right-4 top-20 z-50"><CallRing /></div>
-          <div className="fixed left-1/2 top-[4.5rem] z-50 -translate-x-1/2"><LiveBadge /></div>
+          <div className={`fixed right-4 z-50 ${app ? 'top-[calc(env(safe-area-inset-top)+0.75rem)] left-4 sm:left-auto' : 'top-20'}`}><CallRing /></div>
+          <div className={`fixed left-1/2 z-50 -translate-x-1/2 ${app ? 'top-[calc(env(safe-area-inset-top)+0.5rem)]' : 'top-[4.5rem]'}`}><LiveBadge /></div>
           {note && <div className="fixed bottom-4 right-4 z-50 rounded-xl border border-white/[0.08] bg-ink-900/95 px-4 py-2.5 text-[13px] shadow-lift animate-pop">{note}</div>}
-          {big && <div className="fixed inset-x-0 bottom-0 top-16 z-40 bg-ink-950/95 backdrop-blur"><CallPage /></div>}
+          {big && <div className={`fixed inset-x-0 bottom-0 z-40 bg-ink-950/95 backdrop-blur ${app ? 'top-0 pt-[env(safe-area-inset-top)]' : 'top-16'}`}><CallPage /></div>}
           <CallModes />
         </>,
         document.body,
