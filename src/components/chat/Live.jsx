@@ -2,7 +2,7 @@
 // The same parts in the launcher window (LiveDock), the overlay (window "live") and on
 // the website.
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Camera, Check, ChevronDown, Eye, Gauge, SlidersHorizontal, Headphones, Loader2, Mic, MicOff, Monitor, Radio, RefreshCw, Send, VideoOff, Volume2, VolumeX, X } from 'lucide-react'
+import { Camera, Check, ChevronDown, Eye, Gauge, Scissors, SlidersHorizontal, Headphones, Loader2, Mic, MicOff, Monitor, Radio, RefreshCw, Send, VideoOff, Volume2, VolumeX, X } from 'lucide-react'
 import { BUFFER_MAX, programOk, useLive } from './useLive'
 import { useSocial } from './useSocial'
 import { PersonAvatar } from './Person'
@@ -181,6 +181,48 @@ function LiveChat({ host = false }) {
   )
 }
 
+// ------------------------------------------------------------------ clip that
+const clipLen = () => ({ 30: '30 Sekunden', 120: '2 Minuten' }[load('settings', {}).liveClipSeconds] || 'Minute')
+const mbOf = n => (n / 1048576).toLocaleString('de-DE', { maximumFractionDigits: 1 })
+
+/** "Clip": the last minute as a video. watch: of the live you watch, else of yours. */
+function ClipButton({ watch = false }) {
+  const busy = useLive(s => (watch ? s.wclipping : s.clipping))
+  const key = useLive(s => s.clipKeyLabel)
+  const len = clipLen()
+  return (
+    <button onClick={() => (watch ? useLive.getState().clipWatch() : useLive.getState().clip())} disabled={busy}
+      title={`Clip: die letzte${len === 'Minute' ? '' : 'n'} ${len} als Video speichern${key ? ` (${key})` : ''}`} className={btn}>
+      {busy ? <Loader2 size={15} className="animate-spin" /> : <Scissors size={15} />}
+    </button>
+  )
+}
+
+/** After a clip: saved (watch it, show it in the folder) or what went wrong. Goes away after 30 s. */
+function ClipNote({ watch = false }) {
+  const note = useLive(s => (watch ? s.wclipNote : s.clipNote))
+  const open = useLive(s => s.openClip)
+  const [, redraw] = useState(0)
+  useEffect(() => {
+    if (!note) return undefined
+    const t = setTimeout(() => redraw(n => n + 1), Math.max(0, 30000 - (Date.now() - note.at)))
+    return () => clearTimeout(t)
+  }, [note])
+  if (!note || Date.now() - note.at > 30000) return null
+  if (note.error) return <p className="mx-3 mb-1.5 rounded-lg bg-rose-500/10 px-2 py-1 text-[11.5px] text-rose-200">{note.error}</p>
+  const link = 'shrink-0 rounded-md px-1.5 py-0.5 font-medium hover:bg-white/10'
+  return (
+    <div className="mx-3 mb-1.5 flex items-center gap-1.5 rounded-lg bg-emerald-500/10 px-2 py-1 text-[11.5px] text-emerald-100">
+      <Scissors size={12} className="shrink-0" />
+      <span className="min-w-0 flex-1 truncate" title={note.name}>{note.path ? 'Clip gespeichert' : 'Clip geladen'} · {mbOf(note.size)} MB</span>
+      {note.path && open && (<>
+        <button onClick={() => open(note.path)} className={link}>Ansehen</button>
+        <button onClick={() => open(note.path, true)} className={link}>Ordner</button>
+      </>)}
+    </div>
+  )
+}
+
 // ------------------------------------------------------------------ how the picture travels
 const mbit = k => (k == null ? '?' : (k / 1000).toLocaleString('de-DE', { maximumFractionDigits: 1 }))
 const secs = v => v.toLocaleString('de-DE', { maximumFractionDigits: 1 })
@@ -257,10 +299,12 @@ export function LiveHost() {
         <span className="text-[12px] tabular-nums text-ink-300">{clock(live.since)}</span>
         <span className="flex items-center gap-1 text-[12px] text-ink-400" title={list.map(v => v.name).join(', ') || 'Noch niemand'}><Eye size={13} /> {list.length}</span>
         <div className="flex-1" />
+        {live.clips && <ClipButton />}
         <button onClick={() => useLive.getState().toggleMic()} title={live.mic ? 'Mikro aus' : 'Mikro an'} className={`${btn} ${live.mic ? '' : 'text-rose-300'}`}>{live.mic ? <Mic size={15} /> : <MicOff size={15} />}</button>
         <button onClick={() => { if (sure) useLive.getState().stop(); else { setSure(true); setTimeout(() => setSure(false), 3000) } }}
           className={`h-8 shrink-0 rounded-lg px-2.5 text-[12px] font-semibold ${sure ? 'bg-rose-500 text-white' : 'bg-white/[0.07] text-rose-200 hover:bg-rose-500/20'}`}>{sure ? 'Wirklich?' : 'Beenden'}</button>
       </div>
+      <ClipNote />
       {preview && !mirror && (live.video === 'cam' || peek)
         ? <Video stream={preview} className="aspect-video w-full shrink-0 bg-black object-contain" />
         : live.video === 'screen' && !mirror && <button onClick={() => setPeek(true)} className="mx-3 flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-white/[0.04] text-[11.5px] text-ink-400 hover:text-white"><Monitor size={13} /> Dein Bildschirm geht raus. Vorschau zeigen</button>}
@@ -324,6 +368,7 @@ export function LiveWatch() {
       <div className="flex items-center gap-2 px-3 py-2">
         <button onClick={() => useLive.getState().toggleMute()} title={muted ? 'Ton an' : 'Stumm'} className={btn}>{muted || !volume ? <VolumeX size={15} className="text-rose-300" /> : <Volume2 size={15} />}</button>
         <input type="range" min={0} max={100} value={muted ? 0 : volume} onChange={e => useLive.getState().setVolume(Number(e.target.value))} className="h-1 min-w-0 flex-1 accent-rose-500" aria-label="Lautstärke" />
+        {showVideo && w.clips && <ClipButton watch />}
         {shownLines.length > 1 && (
           <button onClick={() => setMix(m => !m)} title="Lautstärke pro Programm und Mikro" className={`${btn} ${mix ? 'bg-white/[0.08] text-white' : ''}`}>
             <SlidersHorizontal size={15} />
@@ -341,6 +386,7 @@ export function LiveWatch() {
           </button>
         )}
       </div>
+      <ClipNote watch />
       {info && !connecting && <InStats video={showVideo} />}
       {mix && shownLines.length > 1 && (
         <div className="mx-3 mb-2 space-y-1.5 rounded-xl bg-white/[0.03] px-2.5 py-2">

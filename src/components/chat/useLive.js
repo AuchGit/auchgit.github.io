@@ -26,6 +26,7 @@ const dropProgram = async () => {}
 const PREFIX = 'auch.'
 const load = (k, d) => { try { const r = localStorage.getItem(PREFIX + k); return r == null ? d : JSON.parse(r) } catch { return d } }
 const save = (k, v) => { try { localStorage.setItem(PREFIX + k, JSON.stringify(v)) } catch { /* blocked */ } }
+import { clipBuffer, clipName, downloadClip } from './clipper'
 
 const ICE = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }, { urls: 'stun:stun.cloudflare.com:3478' }]
 export const LIVE_MAX = 12 // viewers at once (your upload carries every one of them)
@@ -36,12 +37,15 @@ const me = () => useSocial.getState().session?.user?.id || null
 const myName = () => useSocial.getState().me?.player_name || ''
 const settings = () => load('settings', {})
 /** Opus stereo and more bits: music and games sound like themselves. */
+/** Clip length from the settings (30 s, 1 or 2 minutes). */
+const clipSeconds = () => ([30, 60, 120].includes(settings().liveClipSeconds) ? settings().liveClipSeconds : 60)
+const clipsOn = () => settings().liveClips !== false
 const tune = sdp => sdp.replace(/a=fmtp:(\d+) (.*useinbandfec=1.*)/g, (line, pt, rest) => (/stereo=1/.test(rest) ? line : `a=fmtp:${pt} ${rest};stereo=1;sprop-stereo=1;maxaveragebitrate=160000`))
 
 // ------------------------------------------------------------------ host side
 let hostCh = null
 const viewers = new Map() // presence key -> { pc, uid, want }
-const host = { lines: [], video: null, vstream: null, ctx: null, micRaw: null, micSrc: null, micGain: null, progGains: [], program: false, since: 0, quality: '720' }
+const host = { lines: [], video: null, vstream: null, ctx: null, micRaw: null, micSrc: null, micGain: null, progGains: [], program: false, since: 0, quality: '720', recMix: null, clips: null }
 
 let statsTimer = null
 const sent = new Map()  // viewer key -> { bytes, at } (for the bitrate)
@@ -56,7 +60,10 @@ const els = new Map() // incoming sound: streamId -> { stream, el, gain, comp, b
 let heard = false
 let hostGoneTimer = null
 let wctx = null       // all sound you hear from a live goes through here
-let wout = null
+let wout = null       // your volume
+let wsum = null       // all lines at your levels (before your volume): also what a clip hears
+let wrec = null
+let wclips = null     // the clip buffer of the live you watch
 let wstatsTimer = null
 let wgot = null       // { bytes, at }
 let wtick = 0
@@ -85,11 +92,26 @@ function limiter(ac, threshold = -2) {
   c.release.value = 0.15
   return c
 }
+/**
+ * Real silence into a recording's sound: with nothing playing, Chromium hands the
+ * recorder no sound at all, and the MP4 waits for it forever (no clips).
+ */
+export function keepTicking(ctx, dest) {
+  const zero = ctx.createConstantSource()
+  zero.offset.value = 0
+  zero.connect(dest)
+  zero.start()
+}
 function viewerCtx() {
   if (!wctx || wctx.state === 'closed') {
     wctx = new AudioContext({ latencyHint: 'interactive' })
     wout = wctx.createGain()
     wout.connect(limiter(wctx, -1)).connect(wctx.destination) // the sum of all lines too
+    wsum = wctx.createGain()
+    wsum.connect(wout)
+    wrec = wctx.createMediaStreamDestination()
+    wsum.connect(limiter(wctx, -1)).connect(wrec)
+    keepTicking(wctx, wrec)
   }
   return wctx
 }
@@ -135,6 +157,12 @@ export const useLive = create((set, get) => ({
   hstats: {},      // your live, per viewer with picture: { fps, w, h, kbps, hw, enc, why, src, rtt, rx }
   wstats: null,    // the picture you watch: { fps, w, h, kbps, dropped, freezes, recent (last 30 s), frozen, delay, loss, rtt, dec, hw }
   buffer: BUFFER_MS, // your waiting room for this host (ms): higher = later but smoother
+  // "clip that": the last minute as a video. Your live: clipping / clipNote (the overlay
+  // mirrors them); the live you watch: wclipping / wclipNote. Note: { name, path, size, at } | { error, at }
+  clipping: false,
+  clipNote: null,
+  wclipping: false,
+  wclipNote: null,
   volume: load('liveVolume', 90),
   muted: false,
   // chats: [{ id, from, name, text, at }]
@@ -176,10 +204,16 @@ export const useLive = create((set, get) => ({
     const ctx = new AudioContext({ sampleRate: 48000, latencyHint: 'interactive' })
     host.ctx = ctx
     host.lines = []
+    // everything that goes out, mixed: what a clip of your live hears
+    const recDest = ctx.createMediaStreamDestination()
+    host.recMix = ctx.createGain()
+    host.recMix.connect(limiter(ctx, -1)).connect(recDest)
+    keepTicking(ctx, recDest)
     const line = (kind, name, node) => {
       const dest = ctx.createMediaStreamDestination()
       dest.channelCount = 2
       node.connect(dest)
+      node.connect(host.recMix)
       host.lines.push({ kind, name, stream: dest.stream })
     }
     let sound = false
@@ -209,7 +243,12 @@ export const useLive = create((set, get) => ({
       host.vstream = new MediaStream([v])
     }
     host.since = Date.now()
-    const live = { since: host.since, video: v ? video : null, audio: sound || !!mic, mic: !!mic, program: progs.map(x => x.name).join(', ') || null, title: String(title || '').trim().slice(0, 80) }
+    // the last minute keeps being recorded for "Clip"
+    if (v && clipsOn()) {
+      const big = host.quality === '1080' && video === 'screen'
+      host.clips = clipBuffer(new MediaStream([v, ...recDest.stream.getAudioTracks()]), { seconds: clipSeconds(), maxW: big ? 1920 : 1280, maxH: big ? 1080 : 720, bitrate: big ? 6_000_000 : 3_500_000 })
+    }
+    const live = { since: host.since, clips: !!host.clips, video: v ? video : null, audio: sound || !!mic, mic: !!mic, program: progs.map(x => x.name).join(', ') || null, title: String(title || '').trim().slice(0, 80) }
     set({ live, starting: false, viewers: {}, chat: [], preview: host.vstream, hstats: {} })
     get()._announce()
     statsLogged = Date.now() - 10000 // first log line after ~20 s, when it has settled
@@ -236,7 +275,7 @@ export const useLive = create((set, get) => ({
     if (!get().live) return
     try { hostCh?.send({ type: 'broadcast', event: 'end', payload: {} }) } catch { /* gone */ }
     get()._hostCleanup()
-    set({ live: null, viewers: {}, preview: null, hstats: {} })
+    set({ live: null, viewers: {}, preview: null, hstats: {}, clipping: false })
     useSocial.getState().setLive(null)
   },
 
@@ -251,8 +290,9 @@ export const useLive = create((set, get) => ({
     host.video?.getTracks().forEach(t => t.stop())
     host.micRaw?.getTracks().forEach(t => t.stop())
     if (host.program) dropProgram('live').catch(() => {})
+    host.clips?.stop()
     host.ctx?.close().catch(() => {})
-    Object.assign(host, { lines: [], video: null, vstream: null, ctx: null, micRaw: null, micSrc: null, micGain: null, progGains: [], program: false, since: 0 })
+    Object.assign(host, { lines: [], video: null, vstream: null, ctx: null, micRaw: null, micSrc: null, micGain: null, progGains: [], program: false, since: 0, recMix: null, clips: null })
   },
 
   async _micOn() {
@@ -417,6 +457,46 @@ export const useLive = create((set, get) => ({
     }
   },
 
+  /** "Clip that" on your live: the last minute as a video (saveClip hook, else a download). */
+  async clip() {
+    if (!get().live) return
+    await get()._cut(host.clips, myName(), 'clipping', 'clipNote')
+  },
+  /** "Clip that" on the live you watch. */
+  async clipWatch() {
+    const w = get().watching
+    if (!w) return
+    await get()._cut(wclips, w.name, 'wclipping', 'wclipNote')
+  },
+  async _cut(buf, who, busyKey, noteKey) {
+    if (get()[busyKey]) return
+    if (!buf) { set({ [noteKey]: { error: clipsOn() ? 'Clips gehen hier nicht.' : 'Clips sind in den Einstellungen aus.', at: Date.now() } }); return }
+    set({ [busyKey]: true, [noteKey]: null })
+    try {
+      const blob = await buf.cut(clipSeconds())
+      if (!blob) throw new Error('Noch nichts aufgenommen. Gleich nochmal?')
+      const name = clipName(who)
+      const saved = await (get().saveClip || downloadClip)(blob, name)
+      const note = { name, path: saved?.path || null, size: blob.size, at: Date.now() }
+      set({ [busyKey]: false, [noteKey]: note })
+      get().onClip?.(note)
+    } catch (e) {
+      set({ [busyKey]: false, [noteKey]: { error: e?.message || 'Der Clip hat nicht geklappt.', at: Date.now() } })
+    }
+  },
+  /** The clip buffer of the live you watch: picture as it comes, sound at your levels. */
+  _watchClips(stream) {
+    wclips?.stop()
+    wclips = null
+    const v = stream?.getVideoTracks()[0]
+    if (v && clipsOn()) {
+      viewerCtx()
+      wclips = clipBuffer(new MediaStream([v, ...wrec.stream.getAudioTracks()]), { seconds: clipSeconds(), maxW: 1280, maxH: 720, bitrate: 3_500_000 })
+    }
+    const w = get().watching
+    if (w && w.clips !== !!wclips) set({ watching: { ...w, clips: !!wclips } })
+  },
+
   /** Write into the chat of your live. */
   hostSay(text) { get()._say(text, hostCh, 'chat') },
 
@@ -494,9 +574,11 @@ export const useLive = create((set, get) => ({
     if (watchCh) { supabase.removeChannel(watchCh); watchCh = null }
     for (const n of els.values()) n.stop()
     els.clear()
-    if (wctx) { wctx.close().catch(() => {}); wctx = null; wout = null }
+    wclips?.stop()
+    wclips = null
+    if (wctx) { wctx.close().catch(() => {}); wctx = null; wout = null; wsum = null; wrec = null }
     watchKey = null
-    set({ watching: null, stream: null, lines: [], wchat: [], wstats: null })
+    set({ watching: null, stream: null, lines: [], wchat: [], wstats: null, wclipping: false })
   },
 
   /** How the picture comes in (every 2 s); every 10 s the host hears it too (their log). */
@@ -551,7 +633,11 @@ export const useLive = create((set, get) => ({
         if (e.track.kind === 'video') {
           const w = get().watching
           set({ stream, watching: w ? { ...w, video: true } : w })
-          e.track.addEventListener('ended', () => { const x = get().watching; if (x && get().stream === stream) set({ stream: null, watching: { ...x, video: false } }) })
+          get()._watchClips(stream)
+          e.track.addEventListener('ended', () => {
+            const x = get().watching
+            if (x && get().stream === stream) { set({ stream: null, watching: { ...x, video: false } }); get()._watchClips(null) }
+          })
           return
         }
         get()._play(stream)
@@ -612,8 +698,8 @@ export const useLive = create((set, get) => ({
       if (n.boosted !== boost) {
         try { n.gain.disconnect() } catch { /* not wired yet */ }
         try { n.comp.disconnect() } catch { /* not wired yet */ }
-        if (boost) n.gain.connect(n.comp).connect(wout)
-        else n.gain.connect(wout)
+        if (boost) n.gain.connect(n.comp).connect(wsum)
+        else n.gain.connect(wsum)
         n.boosted = boost
       }
     }
@@ -665,7 +751,7 @@ export const useLive = create((set, get) => ({
 
 /** For the overlay: the host side without pictures. */
 export function liveSnapshot(s = useLive.getState()) {
-  return { live: s.live, starting: s.starting, viewers: s.viewers, chat: s.chat, hstats: s.hstats, error: s.live || s.starting ? s.error : null }
+  return { live: s.live, starting: s.starting, viewers: s.viewers, chat: s.chat, hstats: s.hstats, clipping: s.clipping, clipNote: s.clipNote, error: s.live || s.starting ? s.error : null }
 }
-export const LIVE_ACTIONS = ['start', 'stop', 'toggleMic', 'setProgramLevel', 'hostSay']
+export const LIVE_ACTIONS = ['start', 'stop', 'toggleMic', 'setProgramLevel', 'hostSay', 'clip']
 export const programOk = isTauri
