@@ -3,7 +3,7 @@
 // the website.
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Camera, Check, ChevronDown, Eye, Gauge, SlidersHorizontal, Headphones, Loader2, Mic, MicOff, Monitor, Radio, RefreshCw, Send, VideoOff, Volume2, VolumeX, X } from 'lucide-react'
-import { programOk, useLive } from './useLive'
+import { BUFFER_MAX, programOk, useLive } from './useLive'
 import { useSocial } from './useSocial'
 import { PersonAvatar } from './Person'
 
@@ -197,7 +197,7 @@ function OutStats() {
   const settled = x.age > 15000
   if (settled && x.why === 'cpu') tips.push('Der PC kommt mit dem Umwandeln nicht hinterher. „Flüssig (720p)“ nehmen oder weniger Zuschauer.')
   if (settled && x.why === 'bandwidth') tips.push('Deine Leitung ist zu knapp, das Bild wird kleiner oder ruckelt. „Flüssig (720p)“ hilft.')
-  if (x.rx?.freezes > 2) tips.push(`Bei ${x.name} hing das Bild ${x.rx.freezes}× (zusammen ${secs(x.rx.frozen)} s)${x.rx.loss > 1 ? `, ${secs(x.rx.loss)} % gehen unterwegs verloren` : ''}.`)
+  if ((x.rx?.recent ?? x.rx?.freezes) > 1) tips.push(`Bei ${x.name} hängt das Bild ab und zu${x.rx.loss > 1 ? ` (${secs(x.rx.loss)} % gehen unterwegs verloren)` : ''}. Hilft oft: dort beim Tacho die Verzögerung höher stellen.`)
   return (
     <div className="px-3 pb-1 text-[11px] leading-snug text-ink-500">
       <div className="tabular-nums" title={`${x.enc || ''}${x.rtt != null ? ` · ${x.rtt} ms hin und zurück` : ''}`}>
@@ -208,14 +208,31 @@ function OutStats() {
   )
 }
 
-/** Viewer: how the picture comes in. */
-function InStats() {
+/** Viewer: your delay (until it stops hanging) and how the picture comes in. */
+function InStats({ video }) {
   const x = useLive(s => s.wstats)
-  if (!x) return <div className="px-3 pb-1.5 text-[11px] text-ink-500">Noch keine Messwerte.</div>
+  const buffer = useLive(s => s.buffer)
+  const bad = x && x.recent > 0
   return (
-    <div className="px-3 pb-1.5 text-[11px] leading-snug tabular-nums text-ink-500" title={x.dec || ''}>
-      {x.fps} fps · {x.w}×{x.h} · {mbit(x.kbps)} Mbit/s · Hänger: {x.freezes}{x.freezes ? ` (${secs(x.frozen)} s)` : ''}
-      {x.loss != null ? ` · Verlust ${secs(x.loss)} %` : ''}{x.delay != null ? ` · Puffer ${x.delay} ms` : ''}{x.rtt != null ? ` · Ping ${x.rtt} ms` : ''}
+    <div className="mx-3 mb-2 rounded-xl bg-white/[0.03] px-2.5 py-2 text-[11px] leading-snug text-ink-400">
+      <label className="flex items-center gap-2 text-[11.5px] text-ink-300">
+        <span className="shrink-0">Verzögerung</span>
+        <input type="range" min={0} max={BUFFER_MAX} step={100} value={buffer} onChange={e => useLive.getState().setBuffer(Number(e.target.value))}
+          className="h-1 min-w-0 flex-1 accent-rose-500" aria-label="Verzögerung" />
+        <span className="w-10 shrink-0 text-right tabular-nums">{secs(buffer / 1000)} s</span>
+      </label>
+      {video && x && (
+        <div className={`mt-1 tabular-nums ${bad ? 'text-amber-200/90' : 'text-emerald-300/80'}`}>
+          {bad ? `${x.recent} Hänger in den letzten 30 s: Verzögerung höher stellen.` : 'Keine Hänger in den letzten 30 s.'}
+        </div>
+      )}
+      <p className="mt-1 text-ink-500">Ruckelt es bei dir? Höher stellen, bis es flüssig läuft. Bild und Ton kommen dann etwas später, laufen aber rund. Wird für {useLive.getState().watching?.name || 'diesen Stream'} gemerkt.</p>
+      {video && x && (
+        <div className="mt-1.5 tabular-nums text-ink-500" title={x.dec || ''}>
+          {x.fps} fps · {x.w}×{x.h} · {mbit(x.kbps)} Mbit/s · Hänger gesamt: {x.freezes}{x.freezes ? ` (${secs(x.frozen)} s)` : ''}
+          {x.loss != null ? ` · Verlust ${secs(x.loss)} %` : ''}{x.delay != null ? ` · Puffer gerade ${x.delay} ms` : ''}{x.rtt != null ? ` · Ping ${x.rtt} ms` : ''}
+        </div>
+      )}
     </div>
   )
 }
@@ -312,8 +329,8 @@ export function LiveWatch() {
             <SlidersHorizontal size={15} />
           </button>
         )}
-        {showVideo && (
-          <button onClick={() => setInfo(v => !v)} title="Wie das Bild ankommt" className={`${btn} ${info ? 'bg-white/[0.08] text-white' : ''}`}>
+        {!connecting && (
+          <button onClick={() => setInfo(v => !v)} title="Verzögerung einstellen (gegen Ruckeln) und wie das Bild ankommt" className={`${btn} ${info ? 'bg-white/[0.08] text-white' : ''}`}>
             <Gauge size={15} />
           </button>
         )}
@@ -324,7 +341,7 @@ export function LiveWatch() {
           </button>
         )}
       </div>
-      {info && showVideo && <InStats />}
+      {info && !connecting && <InStats video={showVideo} />}
       {mix && shownLines.length > 1 && (
         <div className="mx-3 mb-2 space-y-1.5 rounded-xl bg-white/[0.03] px-2.5 py-2">
           <datalist id="live-level-marks"><option value="100" /></datalist>

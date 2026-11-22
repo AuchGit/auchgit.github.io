@@ -60,7 +60,17 @@ let wout = null
 let wstatsTimer = null
 let wgot = null       // { bytes, at }
 let wtick = 0
+let whist = []        // the last ~30 s of samples: { at, freezes, jd, je } (hangs lately, buffer now)
 const BUFFER_MS = 200 // a little waiting room for late pictures: smoother, a bit later
+export const BUFFER_MAX = 3000
+
+/** How long pictures and sound wait before playing (same for both: they stay together). */
+function applyBuffer(receiver, ms) {
+  try {
+    if ('jitterBufferTarget' in receiver) receiver.jitterBufferTarget = ms
+    else if ('playoutDelayHint' in receiver) receiver.playoutDelayHint = ms / 1000
+  } catch { /* the engine decides */ }
+}
 
 /**
  * Squeezes peaks just below full scale and leaves everything under it alone, so a line
@@ -123,7 +133,8 @@ export const useLive = create((set, get) => ({
   lines: [],       // the sound lines that come in: [{ id, kind: 'program'|'screen'|'mic', name }]
   levels: {},      // how loud each line is for you (this host): { 'kind:name': 0..200 }, over 100 a limiter catches peaks
   hstats: {},      // your live, per viewer with picture: { fps, w, h, kbps, hw, enc, why, src, rtt, rx }
-  wstats: null,    // the picture you watch: { fps, w, h, kbps, dropped, freezes, frozen, delay, loss, rtt, dec, hw }
+  wstats: null,    // the picture you watch: { fps, w, h, kbps, dropped, freezes, recent (last 30 s), frozen, delay, loss, rtt, dec, hw }
+  buffer: BUFFER_MS, // your waiting room for this host (ms): higher = later but smoother
   volume: load('liveVolume', 90),
   muted: false,
   // chats: [{ id, from, name, text, at }]
@@ -402,7 +413,7 @@ export const useLive = create((set, get) => ({
     if (list.length && Date.now() - statsLogged > 30000) {
       statsLogged = Date.now()
       get().onLog?.(`live out (${host.quality}p): ` + list.map(x => `${x.name} ${x.w}x${x.h} ${x.fps}fps (capture ${x.src ?? '?'}) ${x.kbps ?? '?'}kbit/s ${x.codec} enc=${x.enc}${x.hw === true ? ' hw' : x.hw === false ? ' sw' : ''} limit=${x.why} rtt=${x.rtt ?? '?'}ms`
-        + (x.rx ? ` | they get ${x.rx.fps}fps ${x.rx.kbps ?? '?'}kbit/s drop=${x.rx.dropped} freezes=${x.rx.freezes} (${x.rx.frozen}s) buffer=${x.rx.delay ?? '?'}ms loss=${x.rx.loss ?? '?'}% dec=${x.rx.dec}` : '')).join(' || '))
+        + (x.rx ? ` | they get ${x.rx.fps}fps ${x.rx.kbps ?? '?'}kbit/s drop=${x.rx.dropped} freezes=${x.rx.freezes} (${x.rx.frozen}s) buffer=${x.rx.delay ?? '?'}ms (set ${x.rx.target ?? '?'}) recent=${x.rx.recent ?? '?'} loss=${x.rx.loss ?? '?'}% dec=${x.rx.dec}` : '')).join(' || '))
     }
   },
 
@@ -420,7 +431,9 @@ export const useLive = create((set, get) => ({
     const name = useSocial.getState().friends.find(f => f.user_id === hostId)?.player_name || p?.name || '?'
     watchKey = `${me()}:${INSTANCE}`
     heard = false
-    set({ watching: { host: hostId, name, title: p?.live?.title || '', want, state: 'connecting', video: false }, stream: null, lines: [], levels: load('liveLevels', {})[hostId] || {}, wchat: [], error: null })
+    // the delay you set for this host before (else the last one you used anywhere)
+    const buffer = load('liveBuffers', {})[hostId] ?? load('liveBuffer', BUFFER_MS)
+    set({ watching: { host: hostId, name, title: p?.live?.title || '', want, state: 'connecting', video: false }, stream: null, lines: [], levels: load('liveLevels', {})[hostId] || {}, wchat: [], error: null, buffer })
     const key = watchKey
     watchCh = supabase.channel(`live-${hostId}`, { config: { broadcast: { self: false }, presence: { key } } })
     watchCh
@@ -438,6 +451,7 @@ export const useLive = create((set, get) => ({
     clearInterval(wstatsTimer)
     wgot = null
     wtick = 0
+    whist = []
     wstatsTimer = setInterval(() => { get()._watchStats().catch(() => {}) }, 2000)
     // nothing comes (not let in, or the network doesn't let it through)
     setTimeout(() => {
@@ -448,6 +462,20 @@ export const useLive = create((set, get) => ({
         get().onNotice?.(`Zu ${name} kommt gerade keine Verbindung zustande.`)
       }
     }, 20000)
+  },
+
+  /**
+   * Your delay for this live (0..3 s): pictures and sound wait that long before playing,
+   * so late ones still make it. Raise it until it stops hanging; takes effect right away.
+   */
+  setBuffer(ms) {
+    const v = Math.max(0, Math.min(BUFFER_MAX, Math.round((Number(ms) || 0) / 50) * 50))
+    const host = get().watching?.host
+    if (host) save('liveBuffers', { ...load('liveBuffers', {}), [host]: v })
+    save('liveBuffer', v)
+    set({ buffer: v })
+    if (watchPc) for (const r of watchPc.getReceivers()) applyBuffer(r, v)
+    whist = whist.slice(-1) // "hangs lately" counts from now
   },
 
   /** Picture on or off (sound only saves data); reconnects with the new choice. */
@@ -483,10 +511,16 @@ export const useLive = create((set, get) => ({
     const kbps = kbit(i.bytesReceived, i.timestamp, wgot)
     wgot = { bytes: i.bytesReceived, at: i.timestamp }
     const lost = i.packetsLost || 0, got = i.packetsReceived || 0
+    // the buffer right now (since the last sample) and the hangs of the last 30 s
+    const now = { at: Date.now(), freezes: i.freezeCount || 0, jd: i.jitterBufferDelay || 0, je: i.jitterBufferEmittedCount || 0 }
+    const prev = whist[whist.length - 1]
+    whist = [...whist, now].filter(x => now.at - x.at <= 31000)
+    const delay = prev && now.je > prev.je ? Math.round(((now.jd - prev.jd) / (now.je - prev.je)) * 1000)
+      : now.je ? Math.round((now.jd / now.je) * 1000) : null
     const st = {
       fps: Math.round(i.framesPerSecond || 0), w: i.frameWidth || 0, h: i.frameHeight || 0, kbps,
-      dropped: i.framesDropped || 0, freezes: i.freezeCount || 0, frozen: Math.round((i.totalFreezesDuration || 0) * 10) / 10,
-      delay: i.jitterBufferEmittedCount ? Math.round((i.jitterBufferDelay / i.jitterBufferEmittedCount) * 1000) : null,
+      dropped: i.framesDropped || 0, freezes: now.freezes, recent: Math.max(0, now.freezes - whist[0].freezes),
+      frozen: Math.round((i.totalFreezesDuration || 0) * 10) / 10, delay, target: get().buffer,
       loss: lost + got ? Math.round((lost / (lost + got)) * 1000) / 10 : null,
       rtt: pair?.currentRoundTripTime != null ? Math.round(pair.currentRoundTripTime * 1000) : null,
       dec: String(i.decoderImplementation || ''), hw: typeof i.powerEfficientDecoder === 'boolean' ? i.powerEfficientDecoder : null,
@@ -504,6 +538,7 @@ export const useLive = create((set, get) => ({
       for (const n of els.values()) n.stop()
       els.clear()
       wgot = null
+      whist = []
       const known = lines && typeof lines === 'object' ? lines : {}
       set({ lines: Object.entries(known).filter(([, l]) => l?.kind && l.kind !== 'video').map(([id, l]) => ({ id, kind: String(l.kind), name: String(l.name || '').slice(0, 60) })), stream: null })
       const pc = new RTCPeerConnection({ iceServers: ICE })
@@ -511,11 +546,7 @@ export const useLive = create((set, get) => ({
       pc.onicecandidate = e => { if (e.candidate) watchCh?.send({ type: 'broadcast', event: 'sig', payload: { to: 'host', from: watchKey, candidate: e.candidate.toJSON() } }) }
       pc.ontrack = e => {
         heard = true
-        // same small buffer for picture and sound (they stay together)
-        try {
-          if ('jitterBufferTarget' in e.receiver) e.receiver.jitterBufferTarget = BUFFER_MS
-          else if ('playoutDelayHint' in e.receiver) e.receiver.playoutDelayHint = BUFFER_MS / 1000
-        } catch { /* the engine decides */ }
+        applyBuffer(e.receiver, get().buffer)
         const stream = e.streams[0] || new MediaStream([e.track])
         if (e.track.kind === 'video') {
           const w = get().watching
