@@ -59,9 +59,21 @@ export function GoLive({ convId = null, onDone }) {
   const [quality, setQuality] = useState(last.quality === '1080' ? '1080' : '720')
   // the desktop app takes a screen straight from the graphics chip ('' = main screen,
   // 'pick' = the system's picker for a single window)
-  const [screen, setScreen] = useState(typeof last.screen === 'string' ? last.screen : '')
+  const [screen, setScreen] = useState(typeof last.screen === 'string' && !last.screen.startsWith('window:') ? last.screen : '')
   const [screens, setScreens] = useState(null)
-  useEffect(() => { const f = useLive.getState().screens; if (f) f().then(l => setScreens(Array.isArray(l) ? l : [])).catch(() => setScreens([])) }, [])
+  // single windows (only the game, whatever lies on top of it); the last program comes back by its exe
+  const [wins, setWins] = useState([])
+  const loadWins = () => {
+    const f = useLive.getState().windows
+    if (!f) return
+    f().then(l => {
+      const list = Array.isArray(l) ? l : []
+      setWins(list)
+      if (last.windowExe) { const again = list.find(w => w.exe === last.windowExe && !w.minimized); if (again) setScreen(s => (s === '' || s.startsWith('window:') ? again.id : s)) }
+    }).catch(() => {})
+  }
+  useEffect(() => { const f = useLive.getState().screens; if (f) f().then(l => setScreens(Array.isArray(l) ? l : [])).catch(() => setScreens([])); loadWins() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  const pickedWin = wins.find(w => w.id === screen)
   const [title, setTitle] = useState('')
   const [announce, setAnnounce] = useState(last.announce !== false)
   const [sources, setSources] = useState([])
@@ -80,7 +92,7 @@ export function GoLive({ convId = null, onDone }) {
   }
   const ok = !!(video || chosen.length || mic)
   async function go() {
-    save('liveLast', { video, all, names: all ? [] : [...picked], mic, announce, quality, screen })
+    save('liveLast', { video, all, names: all ? [] : [...picked], mic, announce, quality, screen, windowExe: pickedWin?.exe || null })
     await useLive.getState().start({ video, programs: chosen, mic, title, announce, convId, quality, screen })
     if (mirror || useLive.getState().live) onDone?.()
   }
@@ -103,11 +115,24 @@ export function GoLive({ convId = null, onDone }) {
           {choice('cam', Camera, 'Kamera')}
         </div>
         {video === 'screen' && screens && (
-          <select value={screens.some(x => x.name === screen) || screen === 'pick' ? screen : ''} onChange={e => setScreen(e.target.value)}
-            className="mt-1.5 h-8 w-full rounded-lg border border-white/10 bg-ink-900 px-2 text-[12px] text-white outline-none focus:border-brand-400">
-            {screens.map(x => <option key={x.name} value={x.primary ? '' : x.name}>{x.label}</option>)}
-            <option value="pick">Ein Fenster wählen (Windows fragt, braucht mehr Leistung)</option>
-          </select>
+          <div className="mt-1.5 flex gap-1">
+            <select value={screens.some(x => x.name === screen) || screen === 'pick' || pickedWin ? screen : ''} onChange={e => setScreen(e.target.value)}
+              className="h-8 min-w-0 flex-1 rounded-lg border border-white/10 bg-ink-900 px-2 text-[12px] text-white outline-none focus:border-brand-400">
+              <optgroup label="Ganzer Bildschirm">
+                {screens.map(x => <option key={x.name} value={x.primary ? '' : x.name}>{x.label}</option>)}
+              </optgroup>
+              {wins.length > 0 && (
+                <optgroup label="Nur ein Fenster (was darüber liegt, sieht keiner)">
+                  {wins.map(w => <option key={w.id} value={w.id}>{w.title}{w.minimized ? ' (minimiert)' : ''}</option>)}
+                </optgroup>
+              )}
+              <option value="pick">Über Windows auswählen (alte Aufnahme, ruckelt mehr)</option>
+            </select>
+            <button type="button" onClick={loadWins} title="Fensterliste neu laden" className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-white/10 text-ink-400 hover:text-white"><RefreshCw size={13} /></button>
+          </div>
+        )}
+        {video === 'screen' && pickedWin?.minimized && (
+          <p className="mt-1 text-[11px] leading-snug text-amber-200/80">Das Fenster ist minimiert: solange gibt es kein Bild.</p>
         )}
         {video === 'screen' && (
           <div className="mt-1.5 flex gap-1.5">
