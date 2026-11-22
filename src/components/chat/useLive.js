@@ -45,7 +45,7 @@ const tune = sdp => sdp.replace(/a=fmtp:(\d+) (.*useinbandfec=1.*)/g, (line, pt,
 // ------------------------------------------------------------------ host side
 let hostCh = null
 const viewers = new Map() // presence key -> { pc, uid, want }
-const host = { lines: [], video: null, vstream: null, ctx: null, micRaw: null, micSrc: null, micGain: null, progGains: [], program: false, since: 0, quality: '720', recMix: null, clips: null }
+const host = { lines: [], video: null, vstream: null, ctx: null, micRaw: null, micSrc: null, micGain: null, progGains: [], program: false, since: 0, quality: '720', recMix: null, clips: null, native: null }
 
 let statsTimer = null
 const sent = new Map()  // viewer key -> { bytes, at } (for the bitrate)
@@ -177,7 +177,7 @@ export const useLive = create((set, get) => ({
    * mic: true/false; title: what's on; announce: friends get a push notification;
    * convId: also say so in that chat (a card with "Zuschauen").
    */
-  async start({ video = null, programs = [], program = null, mic = false, title = '', announce = true, convId = null, quality = '720' } = {}) {
+  async start({ video = null, programs = [], program = null, mic = false, title = '', announce = true, convId = null, quality = '720', screen = '' } = {}) {
     const progs = [...(programs || []), ...(program ? [program] : [])].filter(Boolean)
     if (get().live || get().starting || !supabase || !me()) return
     set({ starting: true, error: null })
@@ -185,10 +185,22 @@ export const useLive = create((set, get) => ({
     let vstream = null
     try {
       if (video === 'screen') {
-        if (!navigator.mediaDevices?.getDisplayMedia) return fail('Bildschirm teilen geht hier nicht.')
-        // 720p ("flüssig") or Full HD ("scharf"), 30 pictures: every viewer gets an encode of their own
-        const [w, h] = quality === '1080' ? [1920, 1080] : [1280, 720]
-        vstream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 30, max: 30 }, width: { max: w }, height: { max: h } }, audio: !progs.length })
+        // the desktop app: pictures straight from the graphics chip (no picker, ~30 a second
+        // while gaming; the browser's capture gave ~10). screen 'pick': the system's picker.
+        if (screen !== 'pick' && get().nativeScreen) {
+          try {
+            const n = await get().nativeScreen({ screen: screen || null, height: quality === '1080' ? 1080 : 720, fps: 30 })
+            if (n) { vstream = n.stream; host.native = { stop: n.stop, screen: screen || null } }
+          } catch (e) {
+            get().onLog?.(`live: graphics-chip capture failed (${e?.message || e}), the picker instead`)
+          }
+        }
+        if (!vstream) {
+          if (!navigator.mediaDevices?.getDisplayMedia) return fail('Bildschirm teilen geht hier nicht.')
+          // 720p ("flüssig") or Full HD ("scharf"), 30 pictures: every viewer gets an encode of their own
+          const [w, h] = quality === '1080' ? [1920, 1080] : [1280, 720]
+          vstream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 30, max: 30 }, width: { max: w }, height: { max: h } }, audio: !progs.length })
+        }
       } else if (video === 'cam') {
         const cam = settings().callCamera
         vstream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: cam ? { exact: cam } : undefined, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } } })
@@ -243,8 +255,12 @@ export const useLive = create((set, get) => ({
       host.vstream = new MediaStream([v])
     }
     host.since = Date.now()
-    // the last minute keeps being recorded for "Clip"
-    if (v && clipsOn()) {
+    // the last minute keeps being recorded for "Clip": from the graphics chip when the picture
+    // comes from there too (no second encode in the browser), else in the browser
+    if (v && clipsOn() && host.native && get().nativeClips) {
+      host.clips = await get().nativeClips(host.native.screen).catch(() => null)
+    }
+    if (v && clipsOn() && !host.clips) {
       const big = host.quality === '1080' && video === 'screen'
       host.clips = clipBuffer(new MediaStream([v, ...recDest.stream.getAudioTracks()]), { seconds: clipSeconds(), maxW: big ? 1920 : 1280, maxH: big ? 1080 : 720, bitrate: big ? 6_000_000 : 3_500_000 })
     }
@@ -291,8 +307,9 @@ export const useLive = create((set, get) => ({
     host.micRaw?.getTracks().forEach(t => t.stop())
     if (host.program) dropProgram('live').catch(() => {})
     host.clips?.stop()
+    host.native?.stop()
     host.ctx?.close().catch(() => {})
-    Object.assign(host, { lines: [], video: null, vstream: null, ctx: null, micRaw: null, micSrc: null, micGain: null, progGains: [], program: false, since: 0, recMix: null, clips: null })
+    Object.assign(host, { lines: [], video: null, vstream: null, ctx: null, micRaw: null, micSrc: null, micGain: null, progGains: [], program: false, since: 0, recMix: null, clips: null, native: null })
   },
 
   async _micOn() {
@@ -473,11 +490,20 @@ export const useLive = create((set, get) => ({
     if (!buf) { set({ [noteKey]: { error: clipsOn() ? 'Clips gehen hier nicht.' : 'Clips sind in den Einstellungen aus.', at: Date.now() } }); return }
     set({ [busyKey]: true, [noteKey]: null })
     try {
-      const blob = await buf.cut(clipSeconds())
-      if (!blob) throw new Error('Noch nichts aufgenommen. Gleich nochmal?')
       const name = clipName(who)
-      const saved = await (get().saveClip || downloadClip)(blob, name)
-      const note = { name, path: saved?.path || null, size: blob.size, at: Date.now() }
+      let saved, size
+      if (buf.save) {
+        // the graphics chip's recording writes the file itself
+        const info = await buf.save(clipSeconds(), name)
+        saved = { path: info?.path || null }
+        size = info?.bytes || 0
+      } else {
+        const blob = await buf.cut(clipSeconds())
+        if (!blob) throw new Error('Noch nichts aufgenommen. Gleich nochmal?')
+        saved = await (get().saveClip || downloadClip)(blob, name)
+        size = blob.size
+      }
+      const note = { name, path: saved?.path || null, size, at: Date.now() }
       set({ [busyKey]: false, [noteKey]: note })
       get().onClip?.(note)
     } catch (e) {

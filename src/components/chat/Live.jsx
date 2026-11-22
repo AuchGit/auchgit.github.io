@@ -57,6 +57,11 @@ export function GoLive({ convId = null, onDone }) {
   const [picked, setPicked] = useState(() => new Set(last.names || []))
   const [mic, setMic] = useState(!!last.mic)
   const [quality, setQuality] = useState(last.quality === '1080' ? '1080' : '720')
+  // the desktop app takes a screen straight from the graphics chip ('' = main screen,
+  // 'pick' = the system's picker for a single window)
+  const [screen, setScreen] = useState(typeof last.screen === 'string' ? last.screen : '')
+  const [screens, setScreens] = useState(null)
+  useEffect(() => { const f = useLive.getState().screens; if (f) f().then(l => setScreens(Array.isArray(l) ? l : [])).catch(() => setScreens([])) }, [])
   const [title, setTitle] = useState('')
   const [announce, setAnnounce] = useState(last.announce !== false)
   const [sources, setSources] = useState([])
@@ -75,8 +80,8 @@ export function GoLive({ convId = null, onDone }) {
   }
   const ok = !!(video || chosen.length || mic)
   async function go() {
-    save('liveLast', { video, all, names: all ? [] : [...picked], mic, announce, quality })
-    await useLive.getState().start({ video, programs: chosen, mic, title, announce, convId, quality })
+    save('liveLast', { video, all, names: all ? [] : [...picked], mic, announce, quality, screen })
+    await useLive.getState().start({ video, programs: chosen, mic, title, announce, convId, quality, screen })
     if (mirror || useLive.getState().live) onDone?.()
   }
   const choice = (val, Icon, label) => (
@@ -97,6 +102,13 @@ export function GoLive({ convId = null, onDone }) {
           {canScreen && choice('screen', Monitor, 'Bildschirm')}
           {choice('cam', Camera, 'Kamera')}
         </div>
+        {video === 'screen' && screens && (
+          <select value={screens.some(x => x.name === screen) || screen === 'pick' ? screen : ''} onChange={e => setScreen(e.target.value)}
+            className="mt-1.5 h-8 w-full rounded-lg border border-white/10 bg-ink-900 px-2 text-[12px] text-white outline-none focus:border-brand-400">
+            {screens.map(x => <option key={x.name} value={x.primary ? '' : x.name}>{x.label}</option>)}
+            <option value="pick">Ein Fenster wählen (Windows fragt, braucht mehr Leistung)</option>
+          </select>
+        )}
         {video === 'screen' && (
           <div className="mt-1.5 flex gap-1.5">
             {[['720', 'Flüssig (720p)', 'Weniger Last für PC und Leitung'], ['1080', 'Scharf (1080p)', 'Schärfer, braucht mehr Leistung']].map(([q, label, hint]) => (
