@@ -2,7 +2,7 @@
 // The same parts in the launcher window (LiveDock), the overlay (window "live") and on
 // the website.
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Camera, Check, ChevronDown, Eye, SlidersHorizontal, Headphones, Loader2, Mic, MicOff, Monitor, Radio, RefreshCw, Send, VideoOff, Volume2, VolumeX, X } from 'lucide-react'
+import { Camera, Check, ChevronDown, Eye, Gauge, SlidersHorizontal, Headphones, Loader2, Mic, MicOff, Monitor, Radio, RefreshCw, Send, VideoOff, Volume2, VolumeX, X } from 'lucide-react'
 import { programOk, useLive } from './useLive'
 import { useSocial } from './useSocial'
 import { PersonAvatar } from './Person'
@@ -181,6 +181,45 @@ function LiveChat({ host = false }) {
   )
 }
 
+// ------------------------------------------------------------------ how the picture travels
+const mbit = k => (k == null ? '?' : (k / 1000).toLocaleString('de-DE', { maximumFractionDigits: 1 }))
+const secs = v => v.toLocaleString('de-DE', { maximumFractionDigits: 1 })
+
+/** Host: how the picture goes out (the weakest viewer), and what holds it back. */
+function OutStats() {
+  const stats = useLive(s => s.hstats)
+  const list = Object.values(stats || {})
+  if (!list.length) return null
+  const x = list.reduce((a, b) => (b.fps < a.fps ? b : a))
+  const chip = x.hw === true ? 'Grafikchip' : x.hw === false ? 'Prozessor' : null
+  const tips = []
+  if (x.src != null && x.src < 22) tips.push(`Die Aufnahme liefert nur ${x.src} Bilder pro Sekunde. Oft hilft: das Spielfenster statt des ganzen Bildschirms teilen, oder das Spiel im Fenster-Vollbild statt exklusivem Vollbild.`)
+  const settled = x.age > 15000
+  if (settled && x.why === 'cpu') tips.push('Der PC kommt mit dem Umwandeln nicht hinterher. „Flüssig (720p)“ nehmen oder weniger Zuschauer.')
+  if (settled && x.why === 'bandwidth') tips.push('Deine Leitung ist zu knapp, das Bild wird kleiner oder ruckelt. „Flüssig (720p)“ hilft.')
+  if (x.rx?.freezes > 2) tips.push(`Bei ${x.name} hing das Bild ${x.rx.freezes}× (zusammen ${secs(x.rx.frozen)} s)${x.rx.loss > 1 ? `, ${secs(x.rx.loss)} % gehen unterwegs verloren` : ''}.`)
+  return (
+    <div className="px-3 pb-1 text-[11px] leading-snug text-ink-500">
+      <div className="tabular-nums" title={`${x.enc || ''}${x.rtt != null ? ` · ${x.rtt} ms hin und zurück` : ''}`}>
+        Bild raus{list.length > 1 ? ` (schwächster von ${list.length})` : ''}: {x.fps} fps · {x.w}×{x.h} · {mbit(x.kbps)} Mbit/s{x.codec ? ` · ${x.codec}` : ''}{chip ? ` über ${chip}` : ''}
+      </div>
+      {tips.map(t => <div key={t} className="mt-0.5 text-amber-200/80">{t}</div>)}
+    </div>
+  )
+}
+
+/** Viewer: how the picture comes in. */
+function InStats() {
+  const x = useLive(s => s.wstats)
+  if (!x) return <div className="px-3 pb-1.5 text-[11px] text-ink-500">Noch keine Messwerte.</div>
+  return (
+    <div className="px-3 pb-1.5 text-[11px] leading-snug tabular-nums text-ink-500" title={x.dec || ''}>
+      {x.fps} fps · {x.w}×{x.h} · {mbit(x.kbps)} Mbit/s · Hänger: {x.freezes}{x.freezes ? ` (${secs(x.frozen)} s)` : ''}
+      {x.loss != null ? ` · Verlust ${secs(x.loss)} %` : ''}{x.delay != null ? ` · Puffer ${x.delay} ms` : ''}{x.rtt != null ? ` · Ping ${x.rtt} ms` : ''}
+    </div>
+  )
+}
+
 // ------------------------------------------------------------------ host / viewer panels
 export function LiveHost() {
   useNow()
@@ -223,6 +262,7 @@ export function LiveHost() {
       <div className="px-3 py-1.5 text-[11.5px] text-ink-400">
         {list.length ? <>Dabei: {list.map(v => `${v.name}${v.want === 'audio' ? ' (Ton)' : ''}`).join(', ')}</> : 'Noch niemand da. Deine Freunde sehen dich oben in der Freundesliste.'}
       </div>
+      {live.video && <OutStats />}
       {error && <p className="mx-3 rounded-lg bg-rose-500/10 px-2 py-1 text-[11.5px] text-rose-200">{error}</p>}
       <LiveChat host />
     </div>
@@ -240,6 +280,7 @@ export function LiveWatch() {
   const lines = useLive(s => s.lines)
   const levels = useLive(s => s.levels)
   const [mix, setMix] = useState(false)
+  const [info, setInfo] = useState(false)
   if (!w) return null
   // the mic line is always there, but only worth a slider while it's on
   const shownLines = lines.filter(l => l.kind !== 'mic' || hostLive?.mic)
@@ -271,6 +312,11 @@ export function LiveWatch() {
             <SlidersHorizontal size={15} />
           </button>
         )}
+        {showVideo && (
+          <button onClick={() => setInfo(v => !v)} title="Wie das Bild ankommt" className={`${btn} ${info ? 'bg-white/[0.08] text-white' : ''}`}>
+            <Gauge size={15} />
+          </button>
+        )}
         {hostLive?.video && (
           <button onClick={() => useLive.getState().setWant(w.want === 'both' ? 'audio' : 'both')} title={w.want === 'both' ? 'Nur Ton (spart Daten)' : 'Mit Bild'}
             className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg bg-white/[0.06] px-2.5 text-[11.5px] text-ink-200 hover:bg-white/[0.1]">
@@ -278,18 +324,24 @@ export function LiveWatch() {
           </button>
         )}
       </div>
+      {info && showVideo && <InStats />}
       {mix && shownLines.length > 1 && (
         <div className="mx-3 mb-2 space-y-1.5 rounded-xl bg-white/[0.03] px-2.5 py-2">
+          <datalist id="live-level-marks"><option value="100" /></datalist>
           {shownLines.map(l => {
             const v = levels[`${l.kind}:${l.name}`] ?? 100
             return (
               <label key={l.id} className="flex items-center gap-2 text-[11.5px] text-ink-300">
                 <span className="w-24 shrink-0 truncate" title={l.name}>{l.kind === 'mic' ? <Mic size={11} className="mr-1 inline" /> : null}{l.name}</span>
-                <input type="range" min={0} max={100} value={v} onChange={e => useLive.getState().setLevel(l, Number(e.target.value))} className="h-1 min-w-0 flex-1 accent-rose-500" aria-label={`Lautstärke ${l.name}`} />
-                <span className="w-8 shrink-0 text-right tabular-nums">{v}%</span>
+                <input type="range" min={0} max={200} step={5} list="live-level-marks" value={v} onChange={e => useLive.getState().setLevel(l, Number(e.target.value))}
+                  onDoubleClick={() => useLive.getState().setLevel(l, 100)} title="Doppelklick: 100 %"
+                  className={`h-1 min-w-0 flex-1 ${v > 100 ? 'accent-amber-400' : 'accent-rose-500'}`} aria-label={`Lautstärke ${l.name}`} />
+                <span className={`w-9 shrink-0 text-right tabular-nums ${v > 100 ? 'text-amber-300' : ''}`}
+                  title={v > 100 ? 'Über 100 %: ein Begrenzer fängt die Spitzen ab, damit nichts übersteuert' : undefined}>{v}%</span>
               </label>
             )
           })}
+          <p className="text-[10.5px] leading-snug text-ink-500">Bis 200 %. Über 100 % fängt ein Begrenzer die Spitzen ab, damit nichts kratzt.</p>
         </div>
       )}
       {error && <button onClick={() => useLive.getState().resume()} className="mx-3 rounded-lg bg-rose-500/10 px-2 py-1 text-left text-[11.5px] text-rose-200">{error}</button>}

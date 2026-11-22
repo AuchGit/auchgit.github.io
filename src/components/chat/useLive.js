@@ -43,13 +43,68 @@ let hostCh = null
 const viewers = new Map() // presence key -> { pc, uid, want }
 const host = { lines: [], video: null, vstream: null, ctx: null, micRaw: null, micSrc: null, micGain: null, progGains: [], program: false, since: 0, quality: '720' }
 
+let statsTimer = null
+const sent = new Map()  // viewer key -> { bytes, at } (for the bitrate)
+const theirs = new Map() // viewer key -> what their side measures ('wstat')
+let statsLogged = 0
+
 // ------------------------------------------------------------------ viewer side
 let watchCh = null
 let watchPc = null
 let watchKey = null
-const els = new Map() // incoming sound: streamId -> <audio>
+const els = new Map() // incoming sound: streamId -> { stream, el, gain, comp, boosted, stop }
 let heard = false
 let hostGoneTimer = null
+let wctx = null       // all sound you hear from a live goes through here
+let wout = null
+let wstatsTimer = null
+let wgot = null       // { bytes, at }
+let wtick = 0
+const BUFFER_MS = 200 // a little waiting room for late pictures: smoother, a bit later
+
+/**
+ * Squeezes peaks just below full scale and leaves everything under it alone, so a line
+ * turned up past 100 % doesn't crackle.
+ */
+function limiter(ac, threshold = -2) {
+  const c = ac.createDynamicsCompressor()
+  c.threshold.value = threshold
+  c.knee.value = 1
+  c.ratio.value = 20
+  c.attack.value = 0.002
+  c.release.value = 0.15
+  return c
+}
+function viewerCtx() {
+  if (!wctx || wctx.state === 'closed') {
+    wctx = new AudioContext({ latencyHint: 'interactive' })
+    wout = wctx.createGain()
+    wout.connect(limiter(wctx, -1)).connect(wctx.destination) // the sum of all lines too
+  }
+  return wctx
+}
+
+let h264Hw = null
+/** Does the graphics chip encode H.264 for WebRTC? true / false, null = can't tell. */
+function h264Hardware() {
+  if (!h264Hw) {
+    h264Hw = (async () => {
+      const mc = typeof navigator !== 'undefined' ? navigator.mediaCapabilities : null
+      if (!mc?.encodingInfo) return null
+      for (const contentType of ['video/H264;level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f', 'video/H264']) {
+        try {
+          const r = await mc.encodingInfo({ type: 'webrtc', video: { contentType, width: 1280, height: 720, bitrate: 2_000_000, framerate: 30 } })
+          return r?.supported ? !!r.powerEfficient : false
+        } catch { /* this spelling isn't understood, try the next */ }
+      }
+      return null
+    })()
+  }
+  return h264Hw
+}
+
+const pairOf = rep => { let p = null; rep.forEach(r => { if (r.type === 'candidate-pair' && r.nominated && r.state === 'succeeded') p = r }); return p }
+const kbit = (bytes, at, before) => (before && at > before.at ? Math.round(((bytes - before.bytes) * 8) / (at - before.at)) : null)
 
 const canWatch = uid => {
   const s = useSocial.getState()
@@ -66,7 +121,9 @@ export const useLive = create((set, get) => ({
   watching: null,  // { host, name, title, want, state, video: bool }
   stream: null,    // the picture that comes in (MediaStream)
   lines: [],       // the sound lines that come in: [{ id, kind: 'program'|'screen'|'mic', name }]
-  levels: {},      // how loud each line is for you (this host): { 'kind:name': 0..100 }
+  levels: {},      // how loud each line is for you (this host): { 'kind:name': 0..200 }, over 100 a limiter catches peaks
+  hstats: {},      // your live, per viewer with picture: { fps, w, h, kbps, hw, enc, why, src, rtt, rx }
+  wstats: null,    // the picture you watch: { fps, w, h, kbps, dropped, freezes, frozen, delay, loss, rtt, dec, hw }
   volume: load('liveVolume', 90),
   muted: false,
   // chats: [{ id, from, name, text, at }]
@@ -102,6 +159,8 @@ export const useLive = create((set, get) => ({
     }
     host.video = vstream
     host.quality = quality === '1080' ? '1080' : '720'
+    // H.264 only when the graphics chip encodes it; else VP8 (in software it beats H.264)
+    host.h264 = vstream ? await h264Hardware() : null
     // every sound a line of its own
     const ctx = new AudioContext({ sampleRate: 48000, latencyHint: 'interactive' })
     host.ctx = ctx
@@ -140,14 +199,17 @@ export const useLive = create((set, get) => ({
     }
     host.since = Date.now()
     const live = { since: host.since, video: v ? video : null, audio: sound || !!mic, mic: !!mic, program: progs.map(x => x.name).join(', ') || null, title: String(title || '').trim().slice(0, 80) }
-    set({ live, starting: false, viewers: {}, chat: [], preview: host.vstream })
+    set({ live, starting: false, viewers: {}, chat: [], preview: host.vstream, hstats: {} })
     get()._announce()
+    statsLogged = Date.now() - 10000 // first log line after ~20 s, when it has settled
+    if (host.vstream) statsTimer = setInterval(() => { get()._hostStats().catch(() => {}) }, 2000)
 
     const uid = me()
     hostCh = supabase.channel(`live-${uid}`, { config: { broadcast: { self: false }, presence: { key: `${uid}:host` } } })
     hostCh
       .on('broadcast', { event: 'sig' }, ({ payload }) => { get()._hostSignal(payload).catch(() => {}) })
       .on('broadcast', { event: 'chat' }, ({ payload }) => get()._chatIn(payload, 'chat'))
+      .on('broadcast', { event: 'wstat' }, ({ payload }) => { if (payload?.from && viewers.has(payload.from)) theirs.set(payload.from, payload) })
       .on('presence', { event: 'sync' }, () => get()._hostSync())
       .subscribe(st => { if (st === 'SUBSCRIBED') hostCh.track({ host: true, name: myName(), since: host.since }) })
 
@@ -163,11 +225,15 @@ export const useLive = create((set, get) => ({
     if (!get().live) return
     try { hostCh?.send({ type: 'broadcast', event: 'end', payload: {} }) } catch { /* gone */ }
     get()._hostCleanup()
-    set({ live: null, viewers: {}, preview: null })
+    set({ live: null, viewers: {}, preview: null, hstats: {} })
     useSocial.getState().setLive(null)
   },
 
   _hostCleanup() {
+    clearInterval(statsTimer)
+    statsTimer = null
+    sent.clear()
+    theirs.clear()
     for (const v of viewers.values()) { try { v.pc.close() } catch { /* closed */ } }
     viewers.clear()
     if (hostCh) { supabase.removeChannel(hostCh); hostCh = null }
@@ -249,7 +315,7 @@ export const useLive = create((set, get) => ({
 
   async _offer(key, uid, want) {
     const pc = new RTCPeerConnection({ iceServers: ICE })
-    const v = { pc, uid, want }
+    const v = { pc, uid, want, at: Date.now() }
     viewers.set(key, v)
     const lines = {}
     for (const l of host.lines) {
@@ -262,12 +328,14 @@ export const useLive = create((set, get) => ({
     if (vt) {
       const sender = pc.addTrack(vt, host.vstream)
       lines[host.vstream.id] = { kind: 'video', name: 'Bild' }
-      // H.264 first: most graphics chips encode it themselves, the CPU stays free for the game
+      // H.264 first when the graphics chip encodes it (the CPU stays free for the game),
+      // else VP8 (in software it looks better than H.264 and costs less)
       try {
         const tr = pc.getTransceivers().find(x => x.sender === sender)
         const codecs = RTCRtpSender.getCapabilities?.('video')?.codecs || []
-        const h264 = codecs.filter(c => /h264/i.test(c.mimeType))
-        if (tr?.setCodecPreferences && h264.length) tr.setCodecPreferences([...h264, ...codecs.filter(c => !/h264/i.test(c.mimeType))])
+        const first = host.h264 === false ? /vp8/i : /h264/i
+        const lead = codecs.filter(c => first.test(c.mimeType))
+        if (tr?.setCodecPreferences && lead.length) tr.setCodecPreferences([...lead, ...codecs.filter(c => !first.test(c.mimeType))])
       } catch { /* the engine picks */ }
       const p = sender.getParameters()
       p.encodings = p.encodings?.length ? p.encodings : [{}]
@@ -296,6 +364,46 @@ export const useLive = create((set, get) => ({
     if (!v) return
     if (description?.type === 'answer' && v.pc.signalingState === 'have-local-offer') await v.pc.setRemoteDescription(description)
     else if (candidate) await v.pc.addIceCandidate(candidate).catch(() => {})
+  },
+
+  /**
+   * How the picture goes out, per viewer (every 2 s): pictures per second, size, bitrate,
+   * graphics chip or CPU, what holds it back. Every 30 s into launcher.log, with what the
+   * viewers measure on their side.
+   */
+  async _hostStats() {
+    const out = {}
+    for (const [key, v] of viewers) {
+      if (v.want === 'audio') continue
+      let rep
+      try { rep = await v.pc.getStats() } catch { continue }
+      let o = null, src = null
+      rep.forEach(r => {
+        if (r.type === 'outbound-rtp' && r.kind === 'video') o = r
+        else if (r.type === 'media-source' && r.kind === 'video') src = r
+      })
+      if (!o) continue
+      const pair = pairOf(rep)
+      const kbps = kbit(o.bytesSent, o.timestamp, sent.get(key))
+      sent.set(key, { bytes: o.bytesSent, at: o.timestamp })
+      out[key] = {
+        name: get().viewers[key]?.name || '?',
+        fps: Math.round(o.framesPerSecond || 0), w: o.frameWidth || 0, h: o.frameHeight || 0, kbps,
+        hw: typeof o.powerEfficientEncoder === 'boolean' ? o.powerEfficientEncoder : null, enc: String(o.encoderImplementation || ''),
+        why: o.qualityLimitationReason || 'none', src: src?.framesPerSecond != null ? Math.round(src.framesPerSecond) : null,
+        rtt: pair?.currentRoundTripTime != null ? Math.round(pair.currentRoundTripTime * 1000) : null,
+        codec: String(rep.get?.(o.codecId)?.mimeType || '').replace('video/', ''),
+        rx: theirs.get(key) || null,
+        age: Date.now() - (v.at || 0), // the first seconds always look 'short of bandwidth' (it ramps up)
+      }
+    }
+    set({ hstats: out })
+    const list = Object.values(out)
+    if (list.length && Date.now() - statsLogged > 30000) {
+      statsLogged = Date.now()
+      get().onLog?.(`live out (${host.quality}p): ` + list.map(x => `${x.name} ${x.w}x${x.h} ${x.fps}fps (capture ${x.src ?? '?'}) ${x.kbps ?? '?'}kbit/s ${x.codec} enc=${x.enc}${x.hw === true ? ' hw' : x.hw === false ? ' sw' : ''} limit=${x.why} rtt=${x.rtt ?? '?'}ms`
+        + (x.rx ? ` | they get ${x.rx.fps}fps ${x.rx.kbps ?? '?'}kbit/s drop=${x.rx.dropped} freezes=${x.rx.freezes} (${x.rx.frozen}s) buffer=${x.rx.delay ?? '?'}ms loss=${x.rx.loss ?? '?'}% dec=${x.rx.dec}` : '')).join(' || '))
+    }
   },
 
   /** Write into the chat of your live. */
@@ -327,6 +435,10 @@ export const useLive = create((set, get) => ({
         if (!there) hostGoneTimer = setTimeout(() => { if (get().watching?.host === hostId) { get().onNotice?.(`${name} ist nicht mehr live.`); get().unwatch() } }, 12000)
       })
       .subscribe(st => { if (st === 'SUBSCRIBED') watchCh?.track({ name: myName(), want }) })
+    clearInterval(wstatsTimer)
+    wgot = null
+    wtick = 0
+    wstatsTimer = setInterval(() => { get()._watchStats().catch(() => {}) }, 2000)
     // nothing comes (not let in, or the network doesn't let it through)
     setTimeout(() => {
       const now = get().watching
@@ -348,12 +460,40 @@ export const useLive = create((set, get) => ({
 
   unwatch() {
     clearTimeout(hostGoneTimer)
+    clearInterval(wstatsTimer)
+    wstatsTimer = null
     if (watchPc) { try { watchPc.close() } catch { /* closed */ } watchPc = null }
     if (watchCh) { supabase.removeChannel(watchCh); watchCh = null }
-    for (const el of els.values()) { el.pause(); el.srcObject = null }
+    for (const n of els.values()) n.stop()
     els.clear()
+    if (wctx) { wctx.close().catch(() => {}); wctx = null; wout = null }
     watchKey = null
-    set({ watching: null, stream: null, lines: [], wchat: [] })
+    set({ watching: null, stream: null, lines: [], wchat: [], wstats: null })
+  },
+
+  /** How the picture comes in (every 2 s); every 10 s the host hears it too (their log). */
+  async _watchStats() {
+    const pc = watchPc
+    if (!pc || !get().watching) return
+    const rep = await pc.getStats()
+    let i = null
+    rep.forEach(r => { if (r.type === 'inbound-rtp' && r.kind === 'video') i = r })
+    if (!i) { if (get().wstats) set({ wstats: null }); return }
+    const pair = pairOf(rep)
+    const kbps = kbit(i.bytesReceived, i.timestamp, wgot)
+    wgot = { bytes: i.bytesReceived, at: i.timestamp }
+    const lost = i.packetsLost || 0, got = i.packetsReceived || 0
+    const st = {
+      fps: Math.round(i.framesPerSecond || 0), w: i.frameWidth || 0, h: i.frameHeight || 0, kbps,
+      dropped: i.framesDropped || 0, freezes: i.freezeCount || 0, frozen: Math.round((i.totalFreezesDuration || 0) * 10) / 10,
+      delay: i.jitterBufferEmittedCount ? Math.round((i.jitterBufferDelay / i.jitterBufferEmittedCount) * 1000) : null,
+      loss: lost + got ? Math.round((lost / (lost + got)) * 1000) / 10 : null,
+      rtt: pair?.currentRoundTripTime != null ? Math.round(pair.currentRoundTripTime * 1000) : null,
+      dec: String(i.decoderImplementation || ''), hw: typeof i.powerEfficientDecoder === 'boolean' ? i.powerEfficientDecoder : null,
+    }
+    if (watchPc !== pc) return
+    set({ wstats: st })
+    if (++wtick % 5 === 0) watchCh?.send({ type: 'broadcast', event: 'wstat', payload: { from: watchKey, ...st } })
   },
 
   async _watchSignal({ to, description, candidate, full, lines }) {
@@ -361,8 +501,9 @@ export const useLive = create((set, get) => ({
     if (full) { get().unwatch(); set({ error: 'Da schauen gerade zu viele zu. Gleich nochmal versuchen?' }); return }
     if (description?.type === 'offer') {
       if (watchPc) { try { watchPc.close() } catch { /* closed */ } }
-      for (const el of els.values()) { el.pause(); el.srcObject = null }
+      for (const n of els.values()) n.stop()
       els.clear()
+      wgot = null
       const known = lines && typeof lines === 'object' ? lines : {}
       set({ lines: Object.entries(known).filter(([, l]) => l?.kind && l.kind !== 'video').map(([id, l]) => ({ id, kind: String(l.kind), name: String(l.name || '').slice(0, 60) })), stream: null })
       const pc = new RTCPeerConnection({ iceServers: ICE })
@@ -370,6 +511,11 @@ export const useLive = create((set, get) => ({
       pc.onicecandidate = e => { if (e.candidate) watchCh?.send({ type: 'broadcast', event: 'sig', payload: { to: 'host', from: watchKey, candidate: e.candidate.toJSON() } }) }
       pc.ontrack = e => {
         heard = true
+        // same small buffer for picture and sound (they stay together)
+        try {
+          if ('jitterBufferTarget' in e.receiver) e.receiver.jitterBufferTarget = BUFFER_MS
+          else if ('playoutDelayHint' in e.receiver) e.receiver.playoutDelayHint = BUFFER_MS / 1000
+        } catch { /* the engine decides */ }
         const stream = e.streams[0] || new MediaStream([e.track])
         if (e.track.kind === 'video') {
           const w = get().watching
@@ -392,29 +538,60 @@ export const useLive = create((set, get) => ({
     }
   },
 
-  /** One sound line through an element of its own (keeps playing whatever the screen shows). */
+  /**
+   * One sound line: through a gain of its own (0..200 %), over 100 % through a limiter,
+   * then the overall volume. Keeps playing whatever the screen shows.
+   */
   _play(stream) {
-    let el = els.get(stream.id)
-    if (!el) { el = new Audio(); el.autoplay = true; els.set(stream.id, el) }
-    if (el.srcObject !== stream) el.srcObject = stream
-    get()._applyVolumes()
-    el.play().catch(() => set({ error: 'Tippen zum Abspielen.' }))
+    const had = els.get(stream.id)
+    if (had?.stream === stream) { get()._applyVolumes(); return }
+    had?.stop()
+    const ac = viewerCtx()
+    // Chromium only hands remote WebRTC sound to WebAudio while an element plays it too (muted)
+    const el = new Audio()
+    el.muted = true
+    el.srcObject = stream
+    el.play().catch(() => {})
+    const src = ac.createMediaStreamSource(stream)
+    const gain = ac.createGain()
+    const comp = limiter(ac)
+    src.connect(gain)
+    const node = { stream, el, gain, comp, boosted: null, stop: () => { try { src.disconnect(); gain.disconnect(); comp.disconnect() } catch { /* gone */ } el.srcObject = null } }
+    els.set(stream.id, node)
+    get()._applyVolumes(true)
+    if (ac.state !== 'running') {
+      ac.resume().catch(() => {})
+      setTimeout(() => { if (wctx === ac && ac.state !== 'running') set({ error: 'Tippen zum Abspielen.' }) }, 600)
+    }
     // a line the offer didn't name (older launcher on the other side): still hearable
     if (!get().lines.some(l => l.id === stream.id)) set({ lines: [...get().lines, { id: stream.id, kind: 'program', name: 'Ton' }] })
   },
 
-  _applyVolumes() {
+  _applyVolumes(now = false) {
     const { volume, muted, lines, levels } = get()
-    for (const [id, el] of els) {
+    if (!wctx || !wout) return
+    const at = wctx.currentTime
+    const to = (param, v) => { if (now) param.value = v; else param.setTargetAtTime(v, at, 0.03) }
+    to(wout.gain, muted ? 0 : volume / 100)
+    for (const [id, n] of els) {
       const l = lines.find(x => x.id === id)
       const level = l ? levels[`${l.kind}:${l.name}`] ?? 100 : 100
-      el.volume = Math.max(0, Math.min(1, (volume / 100) * (level / 100)))
-      el.muted = muted || level === 0
+      to(n.gain.gain, level / 100)
+      const boost = level > 100
+      if (n.boosted !== boost) {
+        try { n.gain.disconnect() } catch { /* not wired yet */ }
+        try { n.comp.disconnect() } catch { /* not wired yet */ }
+        if (boost) n.gain.connect(n.comp).connect(wout)
+        else n.gain.connect(wout)
+        n.boosted = boost
+      }
     }
   },
 
   /** After the browser blocked it: play on a tap. */
-  resume() { Promise.all([...els.values()].map(el => el.play())).then(() => set({ error: null })).catch(() => {}) },
+  resume() {
+    Promise.all([wctx?.resume(), ...[...els.values()].map(n => n.el.play())]).then(() => set({ error: null })).catch(() => {})
+  },
 
   setVolume(v) {
     const volume = Math.max(0, Math.min(100, Math.round(v)))
@@ -426,11 +603,11 @@ export const useLive = create((set, get) => ({
     set({ muted: !get().muted })
     get()._applyVolumes()
   },
-  /** One line's volume (a program, the mic, the screen's sound), remembered for this friend. */
+  /** One line's volume (a program, the mic, the screen's sound) 0..200 %, remembered for this friend. */
   setLevel(line, v) {
     const host = get().watching?.host
     if (!host) return
-    const levels = { ...get().levels, [`${line.kind}:${line.name}`]: Math.max(0, Math.min(100, Math.round(v))) }
+    const levels = { ...get().levels, [`${line.kind}:${line.name}`]: Math.max(0, Math.min(200, Math.round(v))) }
     save('liveLevels', { ...load('liveLevels', {}), [host]: levels })
     set({ levels })
     get()._applyVolumes()
@@ -457,7 +634,7 @@ export const useLive = create((set, get) => ({
 
 /** For the overlay: the host side without pictures. */
 export function liveSnapshot(s = useLive.getState()) {
-  return { live: s.live, starting: s.starting, viewers: s.viewers, chat: s.chat, error: s.live || s.starting ? s.error : null }
+  return { live: s.live, starting: s.starting, viewers: s.viewers, chat: s.chat, hstats: s.hstats, error: s.live || s.starting ? s.error : null }
 }
 export const LIVE_ACTIONS = ['start', 'stop', 'toggleMic', 'setProgramLevel', 'hostSay']
 export const programOk = isTauri

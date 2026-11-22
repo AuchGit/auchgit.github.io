@@ -6,7 +6,8 @@ import { gameState, useLauncher } from './shim'
 import { useSocial } from './useSocial'
 import { api } from './shim'
 import { EMOTES, emote } from './emotes'
-import { EMOTE_MAX, codeFromFile, customEmotes, prepareEmote, useEmotes } from './useEmotes'
+import { EMOTE_MAX, codeFromFile, customEmotes, openEmote, prepareEmote, useEmotes } from './useEmotes'
+import EmoteCrop, { CropPreview, squareOf } from './EmoteCrop'
 
 // ------------------------------------------------------------------ emojis
 const SETS = [
@@ -64,7 +65,7 @@ export function EmojiButton({ onPick }) {
     window.__auchPicking = false
     if (!f) return
     setErr(null); setBusy(true)
-    try { const img = await prepareEmote(f); setForm({ img, code: codeFromFile(f.name) }) } catch (e) { setErr(e.message) } finally { setBusy(false) }
+    try { const src = await openEmote(f); setForm({ src, code: codeFromFile(f.name) }) } catch (e) { setErr(e.message) } finally { setBusy(false) }
   }
   const mineCount = groups.find(g => g.mine)?.items.length || 0
   const tile = (e, onClick, extra = null) => (
@@ -142,18 +143,27 @@ export function EmojiButton({ onPick }) {
   )
 }
 
-/** Name a new emote, or rename / delete one of yours. `onDone(code | null | undefined)`. */
-export function EmoteForm({ img, edit, code: first = '', onDone }) {
+/**
+ * A new emote: cut out the part you want and name it; or rename / delete one of yours.
+ * `src` from openEmote, `onDone(code | null | undefined)`.
+ */
+export function EmoteForm({ src, edit, code: first = '', onDone }) {
   const [code, setCode] = useState(edit ? edit.code : first)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const [sure, setSure] = useState(false)
-  const done = v => { if (img?.url) URL.revokeObjectURL(img.url); onDone(v) }
+  const [crop, setCrop] = useState(() => (src ? src.box : null))
+  const [square, setSquare] = useState(false)
+  const canCrop = !!src && (!src.animated || src.recode)
+  const done = v => { if (src?.url) URL.revokeObjectURL(src.url); onDone(v) }
   async function save() {
     if (busy) return
     setBusy(true); setError(null)
     try {
-      if (edit) { if (code !== edit.code) await useEmotes.getState().rename(edit.id, code) } else await useEmotes.getState().add(img, code)
+      if (edit) { if (code !== edit.code) await useEmotes.getState().rename(edit.id, code) } else {
+        const img = await prepareEmote(src, canCrop ? crop : null)
+        try { await useEmotes.getState().add(img, code) } finally { URL.revokeObjectURL(img.url) }
+      }
       done(code)
     } catch (e) { setError(e.message); setBusy(false) }
   }
@@ -162,11 +172,27 @@ export function EmoteForm({ img, edit, code: first = '', onDone }) {
     setBusy(true); setError(null)
     try { await useEmotes.getState().remove(edit.id); onDone(null) } catch (e) { setError(e.message); setBusy(false) }
   }
+  const chip = on => `h-6 rounded-md px-2 text-[11px] font-medium transition ${on ? 'bg-white/[0.12] text-white' : 'text-ink-400 hover:bg-white/[0.07] hover:text-white'}`
   return (
     <div className="rounded-xl border border-white/[0.08] bg-white/[0.03] p-2.5">
+      {canCrop && (
+        <div className="mb-2.5">
+          <EmoteCrop src={src} value={crop} onChange={setCrop} square={square} />
+          <div className="mt-1.5 flex items-center gap-1">
+            <button type="button" onClick={() => { const on = !square; setSquare(on); if (on) setCrop(c => squareOf(c, src)) }} className={chip(square)} title="Rahmen bleibt quadratisch">Quadratisch</button>
+            <button type="button" onClick={() => { setSquare(false); setCrop({ x: 0, y: 0, w: src.w, h: src.h }) }} className={chip(false)} title="Das ganze Bild">Alles</button>
+            {!src.animated && (src.box.w !== src.w || src.box.h !== src.h) && (
+              <button type="button" onClick={() => { setSquare(false); setCrop(src.box) }} className={chip(false)} title="Nur was nicht durchsichtig ist">Rand weg</button>
+            )}
+            <span className="ml-auto text-[10.5px] tabular-nums text-ink-500">{crop.w}×{crop.h}</span>
+          </div>
+        </div>
+      )}
       <div className="flex items-center gap-3">
         <span className="grid h-14 w-14 shrink-0 place-items-center rounded-lg bg-white/[0.05]">
-          <img src={edit ? edit.url : img.url} alt="" className="max-h-12 max-w-[52px]" />
+          {edit ? <img src={edit.url} alt="" className="max-h-12 max-w-[52px]" />
+            : canCrop ? <CropPreview src={src} crop={crop} />
+            : <img src={src.url} alt="" className="max-h-12 max-w-[52px]" />}
         </span>
         <label className="min-w-0 flex-1">
           <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-500">Name</span>
@@ -177,7 +203,7 @@ export function EmoteForm({ img, edit, code: first = '', onDone }) {
         </label>
       </div>
       {error ? <p className="mt-2 text-[11.5px] leading-snug text-rose-200">{error}</p>
-        : !edit && <p className="mt-2 text-[11px] leading-snug text-ink-500">{img.animated ? 'Bewegt sich. ' : ''}Am besten ein Name, den man nicht aus Versehen schreibt. Groß und klein zählt.</p>}
+        : !edit && <p className="mt-2 text-[11px] leading-snug text-ink-500">{src.animated ? (src.recode ? 'Bewegt sich. Zugeschnitten wird es neu als GIF gespeichert. ' : 'Bewegt sich. Zuschneiden geht bei bewegten Bildern hier nicht. ') : ''}Am besten ein Name, den man nicht aus Versehen schreibt. Groß und klein zählt.</p>}
       <div className="mt-2 flex items-center gap-1.5">
         {edit && (
           <button type="button" onClick={del} disabled={busy}

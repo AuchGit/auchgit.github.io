@@ -103,7 +103,15 @@ function outNode() {
   const ac = audioCtx()
   if (!local.out || local.out.context !== ac) {
     local.out = ac.createGain()
-    local.out.connect(ac.destination)
+    // people turned up past 100 % don't crackle: peaks get squeezed just below full
+    // scale, everything under it stays as it is
+    const limit = ac.createDynamicsCompressor()
+    limit.threshold.value = -1
+    limit.knee.value = 1
+    limit.ratio.value = 20
+    limit.attack.value = 0.002
+    limit.release.value = 0.15
+    local.out.connect(limit).connect(ac.destination)
   }
   local.out.gain.value = pct(settings().callOutputVolume)
   return local.out
