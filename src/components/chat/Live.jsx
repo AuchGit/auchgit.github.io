@@ -220,7 +220,7 @@ const mbOf = n => (n / 1048576).toLocaleString('de-DE', { maximumFractionDigits:
 /** "Clip": the last minute as a video. watch: of the live you watch, else of yours. */
 function ClipButton({ watch = false }) {
   const busy = useLive(s => (watch ? s.wclipping : s.clipping))
-  const key = useLive(s => s.clipKeyLabel)
+  const key = useLive(s => (watch ? '' : s.clipKeyLabel))
   const len = clipLen()
   return (
     <button onClick={() => (watch ? useLive.getState().clipWatch() : useLive.getState().clip())} disabled={busy}

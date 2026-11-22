@@ -56,6 +56,44 @@ const tuneAudio = sdp => sdp.replace(/a=fmtp:(\d+) (.*useinbandfec=1.*)/g, (line
  * the first seconds were 360p). Chrome reads it from the description's video codec lines.
  */
 const START_KBPS = 3000
+
+/** Codecs sorted by a list of patterns (the rest after them, as they were). */
+function byOrder(codecs, order) {
+  const rank = c => { const i = order.findIndex(re => re.test(c.mimeType)); return i < 0 ? order.length : i }
+  return [...codecs].sort((a, b) => rank(a) - rank(b))
+}
+/**
+ * The sender's order for a viewer: AV1 (the sharpest for the same bits) when this PC has the
+ * cores for it (software, once per viewer: measured 1080p30 ~21 ms a picture on 16 threads),
+ * else VP9, then VP8; H.264 first only when the graphics chip encodes it for WebRTC.
+ */
+function sendOrder(screen, nViewers, noAv1) {
+  const cores = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 4
+  const av1 = screen && !noAv1 && cores >= 8 && nViewers <= 3
+  if (host.h264 === true) return av1 ? [/h264/i, /av1/i, /vp9/i, /vp8/i] : [/h264/i, /vp9/i, /vp8/i]
+  if (!screen) return [/vp8/i, /vp9/i, /h264/i]
+  return av1 ? [/av1/i, /vp9/i, /vp8/i, /h264/i] : cores >= 4 ? [/vp9/i, /vp8/i, /h264/i] : [/vp8/i, /vp9/i, /h264/i]
+}
+let av1Smooth = null
+/** Can this device show AV1 at 1080p30 smoothly? (Else the viewer asks for VP9 / VP8.) */
+async function canPlayAv1() {
+  if (av1Smooth !== null) return av1Smooth
+  try {
+    const r = await navigator.mediaCapabilities.decodingInfo({ type: 'webrtc', video: { contentType: 'video/AV1', width: 1920, height: 1080, bitrate: 9_000_000, framerate: 30 } })
+    av1Smooth = !!(r?.supported && (r.smooth || r.powerEfficient))
+  } catch { av1Smooth = true } // can't tell: let the sender's order decide
+  return av1Smooth
+}
+/** The viewer's side: AV1 only when this device plays it well. */
+async function receiveOrder(pc) {
+  try {
+    const tr = pc.getTransceivers().find(t => t.receiver?.track?.kind === 'video')
+    const codecs = RTCRtpReceiver.getCapabilities?.('video')?.codecs || []
+    if (!tr?.setCodecPreferences || !codecs.length) return
+    const order = (await canPlayAv1()) ? [/av1/i, /vp9/i, /vp8/i, /h264/i] : [/vp9/i, /vp8/i, /h264/i, /av1/i]
+    tr.setCodecPreferences(byOrder(codecs, order))
+  } catch { /* the engine picks */ }
+}
 function tuneVideo(sdp) {
   const lines = sdp.split('\r\n')
   const out = []
@@ -546,20 +584,13 @@ export const useLive = create((set, get) => ({
     if (vt) {
       const sender = pc.addTrack(vt, host.vstream)
       v.videoSender = sender
-      // H.264 first when the graphics chip encodes it (the CPU stays free for the game),
-      // else VP8 (in software it looks better than H.264 and costs less)
+      // the best codec this PC can send to this viewer (see sendOrder; the viewer may still
+      // ask for a lighter one its device plays better, see receiveOrder)
       try {
         const tr = pc.getTransceivers().find(x => x.sender === sender)
+        v.videoTransceiver = tr
         const codecs = RTCRtpSender.getCapabilities?.('video')?.codecs || []
-        // screen and games: AV1, the sharpest for the same bits (measured 1080p30: ~21 ms a
-        // picture, fits; ~3x VP9's CPU, and that's per viewer: from the 4th viewer on VP9),
-        // then VP9, VP8 for whoever can't; H.264 first only when the graphics chip encodes it
-        const order = host.h264 === true ? [/h264/i, /av1/i, /vp9/i, /vp8/i]
-          : get().live?.video === 'screen' ? (viewers.size <= 3 ? [/av1/i, /vp9/i, /vp8/i, /h264/i] : [/vp9/i, /vp8/i, /h264/i])
-          : [/vp8/i, /vp9/i, /h264/i]
-        const rank = c => { const i = order.findIndex(re => re.test(c.mimeType)); return i < 0 ? order.length : i }
-        const sorted = [...codecs].sort((a, b) => rank(a) - rank(b))
-        if (tr?.setCodecPreferences && sorted.length) tr.setCodecPreferences(sorted)
+        if (tr?.setCodecPreferences && codecs.length) tr.setCodecPreferences(byOrder(codecs, sendOrder(get().live?.video === 'screen', viewers.size, false)))
       } catch { /* the engine picks */ }
       const p = sender.getParameters()
       p.encodings = p.encodings?.length ? p.encodings : [{}]
@@ -610,6 +641,19 @@ export const useLive = create((set, get) => ({
       const pair = pairOf(rep)
       const kbps = kbit(o.bytesSent, o.timestamp, sent.get(key))
       sent.set(key, { bytes: o.bytesSent, at: o.timestamp })
+      // AV1 too much for this PC right now (10 s "cpu"): this viewer goes to VP9, same connection
+      const codecName = String(rep.get?.(o.codecId)?.mimeType || '')
+      if (/av1/i.test(codecName) && o.qualityLimitationReason === 'cpu') {
+        v.cpuSince = v.cpuSince || Date.now()
+        if (Date.now() - v.cpuSince > 10000 && !v.noAv1 && v.videoTransceiver?.setCodecPreferences) {
+          v.noAv1 = true
+          try {
+            v.videoTransceiver.setCodecPreferences(byOrder(RTCRtpSender.getCapabilities('video').codecs, sendOrder(true, viewers.size, true)))
+            get().onLog?.(`live: ${get().viewers[key]?.name || '?'} AV1 -> VP9 (the CPU couldn't keep up)`)
+            get()._reoffer(key, v)
+          } catch { /* stays */ }
+        }
+      } else v.cpuSince = 0
       out[key] = {
         name: get().viewers[key]?.name || '?',
         fps: Math.round(o.framesPerSecond || 0), w: o.frameWidth || 0, h: o.frameHeight || 0, kbps,
@@ -805,6 +849,7 @@ export const useLive = create((set, get) => ({
       set({ lines: list })
       const pc = watchPc
       await pc.setRemoteDescription(description)
+      await receiveOrder(pc)
       const answer = await pc.createAnswer()
       await pc.setLocalDescription({ type: 'answer', sdp: tune(answer.sdp) })
       watchCh?.send({ type: 'broadcast', event: 'sig', payload: { to: 'host', from: watchKey, description: pc.localDescription.toJSON() } })
@@ -842,6 +887,7 @@ export const useLive = create((set, get) => ({
         if (w && watchPc === pc) set({ watching: { ...w, state: pc.connectionState } })
       }
       await pc.setRemoteDescription(description)
+      await receiveOrder(pc)
       const answer = await pc.createAnswer()
       await pc.setLocalDescription({ type: 'answer', sdp: tune(answer.sdp) })
       watchCh?.send({ type: 'broadcast', event: 'sig', payload: { to: 'host', from: watchKey, description: pc.localDescription.toJSON() } })
