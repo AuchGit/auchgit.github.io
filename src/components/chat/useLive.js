@@ -1,9 +1,10 @@
 // Going live: picture and/or sound to your friends without a call (nothing rings).
 //
 //   * You pick a picture (screen or window through the system picker, the camera, or
-//     none) and sound (a program's sound from Windows, the picked screen's / tab's own
-//     sound, your mic). All sound is mixed into one line; with the picture that is
-//     one stream ("out").
+//     none) and sound (programs' sound from Windows, the picked screen's / tab's own
+//     sound, your mic). Every sound goes out as a line of its own (one MediaStream each,
+//     described by `lines` { streamId: { kind, name } } with the offer), so viewers set
+//     each one's volume themselves. The picture is a stream of its own too.
 //   * Friends see `live` in your presence (useSocial.setLive) and come in: they join the
 //     channel "live-<your id>" with the presence key "<their id>:<instance>" and
 //     { name, want: 'audio' | 'both' }. You open one WebRTC connection per viewer and
@@ -40,13 +41,14 @@ const tune = sdp => sdp.replace(/a=fmtp:(\d+) (.*useinbandfec=1.*)/g, (line, pt,
 // ------------------------------------------------------------------ host side
 let hostCh = null
 const viewers = new Map() // presence key -> { pc, uid, want }
-const host = { out: null, video: null, ctx: null, dest: null, micRaw: null, micSrc: null, micGain: null, progGain: null, program: false, since: 0 }
+const host = { lines: [], video: null, vstream: null, ctx: null, micRaw: null, micSrc: null, micGain: null, progGains: [], program: false, since: 0, quality: '720' }
 
 // ------------------------------------------------------------------ viewer side
 let watchCh = null
 let watchPc = null
 let watchKey = null
-let audioEl = null
+const els = new Map() // incoming sound: streamId -> <audio>
+let heard = false
 let hostGoneTimer = null
 
 const canWatch = uid => {
@@ -62,7 +64,9 @@ export const useLive = create((set, get) => ({
   preview: null,   // own picture (MediaStream), not mirrored
   // watching
   watching: null,  // { host, name, title, want, state, video: bool }
-  stream: null,    // what comes in (MediaStream)
+  stream: null,    // the picture that comes in (MediaStream)
+  lines: [],       // the sound lines that come in: [{ id, kind: 'program'|'screen'|'mic', name }]
+  levels: {},      // how loud each line is for you (this host): { 'kind:name': 0..100 }
   volume: load('liveVolume', 90),
   muted: false,
   // chats: [{ id, from, name, text, at }]
@@ -77,7 +81,7 @@ export const useLive = create((set, get) => ({
    * mic: true/false; title: what's on; announce: friends get a push notification;
    * convId: also say so in that chat (a card with "Zuschauen").
    */
-  async start({ video = null, programs = [], program = null, mic = false, title = '', announce = true, convId = null } = {}) {
+  async start({ video = null, programs = [], program = null, mic = false, title = '', announce = true, convId = null, quality = '720' } = {}) {
     const progs = [...(programs || []), ...(program ? [program] : [])].filter(Boolean)
     if (get().live || get().starting || !supabase || !me()) return
     set({ starting: true, error: null })
@@ -86,8 +90,9 @@ export const useLive = create((set, get) => ({
     try {
       if (video === 'screen') {
         if (!navigator.mediaDevices?.getDisplayMedia) return fail('Bildschirm teilen geht hier nicht.')
-        // at most Full HD and 30 pictures: plenty for friends, and it keeps the PC and the upload calm
-        vstream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 30, max: 30 }, width: { max: 1920 }, height: { max: 1080 } }, audio: !progs.length })
+        // 720p ("flüssig") or Full HD ("scharf"), 30 pictures: every viewer gets an encode of their own
+        const [w, h] = quality === '1080' ? [1920, 1080] : [1280, 720]
+        vstream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 30, max: 30 }, width: { max: w }, height: { max: h } }, audio: !progs.length })
       } else if (video === 'cam') {
         const cam = settings().callCamera
         vstream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: cam ? { exact: cam } : undefined, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } } })
@@ -96,36 +101,46 @@ export const useLive = create((set, get) => ({
       return fail(/NotAllowed|Abort/i.test(String(e?.name || e)) ? null : video === 'cam' ? 'Keine Kamera gefunden.' : 'Bildschirm teilen hat nicht geklappt.')
     }
     host.video = vstream
-    // all sound into one line
+    host.quality = quality === '1080' ? '1080' : '720'
+    // every sound a line of its own
     const ctx = new AudioContext({ sampleRate: 48000, latencyHint: 'interactive' })
     host.ctx = ctx
-    host.dest = ctx.createMediaStreamDestination()
-    host.dest.channelCount = 2
-    host.micGain = ctx.createGain()
-    host.micGain.connect(host.dest)
+    host.lines = []
+    const line = (kind, name, node) => {
+      const dest = ctx.createMediaStreamDestination()
+      dest.channelCount = 2
+      node.connect(dest)
+      host.lines.push({ kind, name, stream: dest.stream })
+    }
     let sound = false
     const screenSound = vstream?.getAudioTracks()[0]
-    if (screenSound) { ctx.createMediaStreamSource(new MediaStream([screenSound])).connect(host.dest); sound = true }
+    if (screenSound) { line('screen', 'Bildschirm-Ton', ctx.createMediaStreamSource(new MediaStream([screenSound]))); sound = true }
     if (progs.length) {
-      host.progGain = ctx.createGain()
-      host.progGain.gain.value = (settings().liveProgramVolume ?? 100) / 100
-      host.progGain.connect(host.dest)
       host.program = true // from here on, cleaning up gives the captures back
       try {
-        for (const pr of progs) ctx.createMediaStreamSource(await takeProgram(pr, 'live')).connect(host.progGain)
+        for (const pr of progs) {
+          const g = ctx.createGain()
+          g.gain.value = (settings().liveProgramVolume ?? 100) / 100
+          ctx.createMediaStreamSource(await takeProgram(pr, 'live')).connect(g)
+          host.progGains.push(g)
+          line('program', pr.name || 'Programm', g)
+        }
         sound = true
       } catch (e) { return fail(e.message) }
     }
+    // the mic line is always there (quiet while off): turning it on needs no reconnecting
+    host.micGain = ctx.createGain()
+    line('mic', 'Mikro', host.micGain)
     if (mic && !(await get()._micOn())) return fail('Kein Zugriff aufs Mikrofon.')
     const v = vstream?.getVideoTracks()[0]
     if (v) {
-      try { v.contentHint = video === 'screen' ? 'motion' : 'motion' } catch { /* old engine */ }
+      try { v.contentHint = 'motion' } catch { /* old engine */ }
       v.addEventListener('ended', () => { if (get().live) get().stop() }) // "Freigabe beenden" in the system bar
+      host.vstream = new MediaStream([v])
     }
-    host.out = new MediaStream([...(v ? [v] : []), ...host.dest.stream.getAudioTracks()])
     host.since = Date.now()
     const live = { since: host.since, video: v ? video : null, audio: sound || !!mic, mic: !!mic, program: progs.map(x => x.name).join(', ') || null, title: String(title || '').trim().slice(0, 80) }
-    set({ live, starting: false, viewers: {}, chat: [], preview: v ? new MediaStream([v]) : null })
+    set({ live, starting: false, viewers: {}, chat: [], preview: host.vstream })
     get()._announce()
 
     const uid = me()
@@ -160,7 +175,7 @@ export const useLive = create((set, get) => ({
     host.micRaw?.getTracks().forEach(t => t.stop())
     if (host.program) dropProgram('live').catch(() => {})
     host.ctx?.close().catch(() => {})
-    Object.assign(host, { out: null, video: null, ctx: null, dest: null, micRaw: null, micSrc: null, micGain: null, progGain: null, program: false, since: 0 })
+    Object.assign(host, { lines: [], video: null, vstream: null, ctx: null, micRaw: null, micSrc: null, micGain: null, progGains: [], program: false, since: 0 })
   },
 
   async _micOn() {
@@ -195,12 +210,12 @@ export const useLive = create((set, get) => ({
   setProgramLevel(value) {
     const v = Math.max(0, Math.min(150, Math.round(value)))
     save('settings', { ...settings(), liveProgramVolume: v })
-    if (host.progGain) host.progGain.gain.value = v / 100
+    for (const g of host.progGains) g.gain.value = v / 100
   },
 
   _announce() {
     const l = get().live
-    useSocial.getState().setLive(l ? { since: l.since, video: !!l.video, audio: !!l.audio, title: l.title } : null)
+    useSocial.getState().setLive(l ? { since: l.since, video: !!l.video, audio: !!l.audio, mic: !!l.mic, title: l.title } : null)
   },
 
   _hostSync() {
@@ -236,16 +251,31 @@ export const useLive = create((set, get) => ({
     const pc = new RTCPeerConnection({ iceServers: ICE })
     const v = { pc, uid, want }
     viewers.set(key, v)
-    for (const t of host.out?.getTracks() || []) {
-      if (t.kind === 'video' && want === 'audio') continue
-      const sender = pc.addTrack(t, host.out)
-      if (t.kind === 'video') {
-        const p = sender.getParameters()
-        p.encodings = p.encodings?.length ? p.encodings : [{}]
-        p.encodings[0].maxBitrate = get().live?.video === 'screen' ? 3_000_000 : 1_500_000
-        p.encodings[0].maxFramerate = 30
-        sender.setParameters(p).catch(() => {})
-      }
+    const lines = {}
+    for (const l of host.lines) {
+      const t = l.stream.getAudioTracks()[0]
+      if (!t) continue
+      pc.addTrack(t, l.stream)
+      lines[l.stream.id] = { kind: l.kind, name: l.name }
+    }
+    const vt = want === 'audio' ? null : host.vstream?.getVideoTracks()[0]
+    if (vt) {
+      const sender = pc.addTrack(vt, host.vstream)
+      lines[host.vstream.id] = { kind: 'video', name: 'Bild' }
+      // H.264 first: most graphics chips encode it themselves, the CPU stays free for the game
+      try {
+        const tr = pc.getTransceivers().find(x => x.sender === sender)
+        const codecs = RTCRtpSender.getCapabilities?.('video')?.codecs || []
+        const h264 = codecs.filter(c => /h264/i.test(c.mimeType))
+        if (tr?.setCodecPreferences && h264.length) tr.setCodecPreferences([...h264, ...codecs.filter(c => !/h264/i.test(c.mimeType))])
+      } catch { /* the engine picks */ }
+      const p = sender.getParameters()
+      p.encodings = p.encodings?.length ? p.encodings : [{}]
+      p.encodings[0].maxBitrate = get().live?.video === 'screen' ? (host.quality === '1080' ? 4_000_000 : 2_200_000) : 1_200_000
+      p.encodings[0].maxFramerate = 30
+      // smooth over sharp: with a bad line the picture gets softer, not choppy
+      p.degradationPreference = 'maintain-framerate'
+      sender.setParameters(p).catch(() => {})
     }
     pc.onicecandidate = e => { if (e.candidate) hostCh?.send({ type: 'broadcast', event: 'sig', payload: { to: key, candidate: e.candidate.toJSON() } }) }
     pc.onconnectionstatechange = () => {
@@ -256,7 +286,7 @@ export const useLive = create((set, get) => ({
     try {
       const offer = await pc.createOffer()
       await pc.setLocalDescription({ type: 'offer', sdp: tune(offer.sdp) })
-      hostCh?.send({ type: 'broadcast', event: 'sig', payload: { to: key, description: pc.localDescription.toJSON() } })
+      hostCh?.send({ type: 'broadcast', event: 'sig', payload: { to: key, description: pc.localDescription.toJSON(), lines } })
     } catch { /* they come again */ }
   },
 
@@ -281,7 +311,8 @@ export const useLive = create((set, get) => ({
     const p = useSocial.getState().online?.[hostId]
     const name = useSocial.getState().friends.find(f => f.user_id === hostId)?.player_name || p?.name || '?'
     watchKey = `${me()}:${INSTANCE}`
-    set({ watching: { host: hostId, name, title: p?.live?.title || '', want, state: 'connecting', video: false }, stream: null, wchat: [], error: null })
+    heard = false
+    set({ watching: { host: hostId, name, title: p?.live?.title || '', want, state: 'connecting', video: false }, stream: null, lines: [], levels: load('liveLevels', {})[hostId] || {}, wchat: [], error: null })
     const key = watchKey
     watchCh = supabase.channel(`live-${hostId}`, { config: { broadcast: { self: false }, presence: { key } } })
     watchCh
@@ -299,7 +330,7 @@ export const useLive = create((set, get) => ({
     // nothing comes (not let in, or the network doesn't let it through)
     setTimeout(() => {
       const now = get().watching
-      if (now?.host === hostId && watchKey === key && !get().stream && now.state !== 'connected') {
+      if (now?.host === hostId && watchKey === key && !heard && now.state !== 'connected') {
         get().unwatch()
         set({ error: 'Da kommt keine Verbindung zustande. Später nochmal?' })
         get().onNotice?.(`Zu ${name} kommt gerade keine Verbindung zustande.`)
@@ -319,21 +350,33 @@ export const useLive = create((set, get) => ({
     clearTimeout(hostGoneTimer)
     if (watchPc) { try { watchPc.close() } catch { /* closed */ } watchPc = null }
     if (watchCh) { supabase.removeChannel(watchCh); watchCh = null }
-    if (audioEl) { audioEl.srcObject = null; audioEl = null }
+    for (const el of els.values()) { el.pause(); el.srcObject = null }
+    els.clear()
     watchKey = null
-    set({ watching: null, stream: null, wchat: [] })
+    set({ watching: null, stream: null, lines: [], wchat: [] })
   },
 
-  async _watchSignal({ to, description, candidate, full }) {
+  async _watchSignal({ to, description, candidate, full, lines }) {
     if (!watchKey || to !== watchKey) return
     if (full) { get().unwatch(); set({ error: 'Da schauen gerade zu viele zu. Gleich nochmal versuchen?' }); return }
     if (description?.type === 'offer') {
       if (watchPc) { try { watchPc.close() } catch { /* closed */ } }
+      for (const el of els.values()) { el.pause(); el.srcObject = null }
+      els.clear()
+      const known = lines && typeof lines === 'object' ? lines : {}
+      set({ lines: Object.entries(known).filter(([, l]) => l?.kind && l.kind !== 'video').map(([id, l]) => ({ id, kind: String(l.kind), name: String(l.name || '').slice(0, 60) })), stream: null })
       const pc = new RTCPeerConnection({ iceServers: ICE })
       watchPc = pc
       pc.onicecandidate = e => { if (e.candidate) watchCh?.send({ type: 'broadcast', event: 'sig', payload: { to: 'host', from: watchKey, candidate: e.candidate.toJSON() } }) }
       pc.ontrack = e => {
+        heard = true
         const stream = e.streams[0] || new MediaStream([e.track])
+        if (e.track.kind === 'video') {
+          const w = get().watching
+          set({ stream, watching: w ? { ...w, video: true } : w })
+          e.track.addEventListener('ended', () => { const x = get().watching; if (x && get().stream === stream) set({ stream: null, watching: { ...x, video: false } }) })
+          return
+        }
         get()._play(stream)
       }
       pc.onconnectionstatechange = () => {
@@ -349,32 +392,48 @@ export const useLive = create((set, get) => ({
     }
   },
 
-  /** Sound through an element of its own (keeps playing whatever the screen shows). */
+  /** One sound line through an element of its own (keeps playing whatever the screen shows). */
   _play(stream) {
-    if (!audioEl) { audioEl = new Audio(); audioEl.autoplay = true }
-    if (audioEl.srcObject !== stream) audioEl.srcObject = stream
-    audioEl.volume = get().volume / 100
-    audioEl.muted = get().muted
-    audioEl.play().catch(() => set({ error: 'Tippen zum Abspielen.' }))
-    const w = get().watching
-    set({ stream, watching: w ? { ...w, video: stream.getVideoTracks().length > 0 } : w })
-    stream.onaddtrack = stream.onremovetrack = () => { const x = get().watching; if (x) set({ watching: { ...x, video: stream.getVideoTracks().length > 0 } }) }
+    let el = els.get(stream.id)
+    if (!el) { el = new Audio(); el.autoplay = true; els.set(stream.id, el) }
+    if (el.srcObject !== stream) el.srcObject = stream
+    get()._applyVolumes()
+    el.play().catch(() => set({ error: 'Tippen zum Abspielen.' }))
+    // a line the offer didn't name (older launcher on the other side): still hearable
+    if (!get().lines.some(l => l.id === stream.id)) set({ lines: [...get().lines, { id: stream.id, kind: 'program', name: 'Ton' }] })
+  },
+
+  _applyVolumes() {
+    const { volume, muted, lines, levels } = get()
+    for (const [id, el] of els) {
+      const l = lines.find(x => x.id === id)
+      const level = l ? levels[`${l.kind}:${l.name}`] ?? 100 : 100
+      el.volume = Math.max(0, Math.min(1, (volume / 100) * (level / 100)))
+      el.muted = muted || level === 0
+    }
   },
 
   /** After the browser blocked it: play on a tap. */
-  resume() { audioEl?.play().then(() => set({ error: null })).catch(() => {}) },
+  resume() { Promise.all([...els.values()].map(el => el.play())).then(() => set({ error: null })).catch(() => {}) },
 
   setVolume(v) {
     const volume = Math.max(0, Math.min(100, Math.round(v)))
     save('liveVolume', volume)
-    if (audioEl) audioEl.volume = volume / 100
     set({ volume, muted: volume === 0 ? get().muted : false })
-    if (audioEl && volume > 0) audioEl.muted = false
+    get()._applyVolumes()
   },
   toggleMute() {
-    const muted = !get().muted
-    if (audioEl) audioEl.muted = muted
-    set({ muted })
+    set({ muted: !get().muted })
+    get()._applyVolumes()
+  },
+  /** One line's volume (a program, the mic, the screen's sound), remembered for this friend. */
+  setLevel(line, v) {
+    const host = get().watching?.host
+    if (!host) return
+    const levels = { ...get().levels, [`${line.kind}:${line.name}`]: Math.max(0, Math.min(100, Math.round(v))) }
+    save('liveLevels', { ...load('liveLevels', {}), [host]: levels })
+    set({ levels })
+    get()._applyVolumes()
   },
 
   /** Write into the chat of the live you watch. */

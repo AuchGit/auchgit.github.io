@@ -2,7 +2,7 @@
 // The same parts in the launcher window (LiveDock), the overlay (window "live") and on
 // the website.
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Camera, Check, ChevronDown, Eye, Headphones, Loader2, Mic, MicOff, Monitor, Radio, RefreshCw, Send, VideoOff, Volume2, VolumeX, X } from 'lucide-react'
+import { Camera, Check, ChevronDown, Eye, SlidersHorizontal, Headphones, Loader2, Mic, MicOff, Monitor, Radio, RefreshCw, Send, VideoOff, Volume2, VolumeX, X } from 'lucide-react'
 import { programOk, useLive } from './useLive'
 import { useSocial } from './useSocial'
 import { PersonAvatar } from './Person'
@@ -56,6 +56,7 @@ export function GoLive({ convId = null, onDone }) {
   const [all, setAll] = useState(programOk && last.all !== false && !last.names?.length)
   const [picked, setPicked] = useState(() => new Set(last.names || []))
   const [mic, setMic] = useState(!!last.mic)
+  const [quality, setQuality] = useState(last.quality === '1080' ? '1080' : '720')
   const [title, setTitle] = useState('')
   const [announce, setAnnounce] = useState(last.announce !== false)
   const [sources, setSources] = useState([])
@@ -74,8 +75,8 @@ export function GoLive({ convId = null, onDone }) {
   }
   const ok = !!(video || chosen.length || mic)
   async function go() {
-    save('liveLast', { video, all, names: all ? [] : [...picked], mic, announce })
-    await useLive.getState().start({ video, programs: chosen, mic, title, announce, convId })
+    save('liveLast', { video, all, names: all ? [] : [...picked], mic, announce, quality })
+    await useLive.getState().start({ video, programs: chosen, mic, title, announce, convId, quality })
     if (mirror || useLive.getState().live) onDone?.()
   }
   const choice = (val, Icon, label) => (
@@ -96,6 +97,14 @@ export function GoLive({ convId = null, onDone }) {
           {canScreen && choice('screen', Monitor, 'Bildschirm')}
           {choice('cam', Camera, 'Kamera')}
         </div>
+        {video === 'screen' && (
+          <div className="mt-1.5 flex gap-1.5">
+            {[['720', 'Flüssig (720p)', 'Weniger Last für PC und Leitung'], ['1080', 'Scharf (1080p)', 'Schärfer, braucht mehr Leistung']].map(([q, label, hint]) => (
+              <button type="button" key={q} onClick={() => setQuality(q)} title={hint}
+                className={`h-7 flex-1 rounded-md border text-[11.5px] transition ${quality === q ? 'border-white/25 bg-white/[0.08] text-white' : 'border-white/[0.06] text-ink-400 hover:text-white'}`}>{label}</button>
+            ))}
+          </div>
+        )}
       </div>
       <div>
         <div className="mb-1 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-ink-500">Ton</div>
@@ -228,7 +237,12 @@ export function LiveWatch() {
   const error = useLive(s => s.error)
   const hostLive = useSocial(s => (w ? s.online?.[w.host]?.live : null))
   const person = useSocial(s => (w ? s.friends.find(f => f.user_id === w.host) : null))
+  const lines = useLive(s => s.lines)
+  const levels = useLive(s => s.levels)
+  const [mix, setMix] = useState(false)
   if (!w) return null
+  // the mic line is always there, but only worth a slider while it's on
+  const shownLines = lines.filter(l => l.kind !== 'mic' || hostLive?.mic)
   const showVideo = w.want === 'both' && w.video
   const connecting = w.state !== 'connected'
   return (
@@ -252,6 +266,11 @@ export function LiveWatch() {
       <div className="flex items-center gap-2 px-3 py-2">
         <button onClick={() => useLive.getState().toggleMute()} title={muted ? 'Ton an' : 'Stumm'} className={btn}>{muted || !volume ? <VolumeX size={15} className="text-rose-300" /> : <Volume2 size={15} />}</button>
         <input type="range" min={0} max={100} value={muted ? 0 : volume} onChange={e => useLive.getState().setVolume(Number(e.target.value))} className="h-1 min-w-0 flex-1 accent-rose-500" aria-label="Lautstärke" />
+        {shownLines.length > 1 && (
+          <button onClick={() => setMix(m => !m)} title="Lautstärke pro Programm und Mikro" className={`${btn} ${mix ? 'bg-white/[0.08] text-white' : ''}`}>
+            <SlidersHorizontal size={15} />
+          </button>
+        )}
         {hostLive?.video && (
           <button onClick={() => useLive.getState().setWant(w.want === 'both' ? 'audio' : 'both')} title={w.want === 'both' ? 'Nur Ton (spart Daten)' : 'Mit Bild'}
             className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg bg-white/[0.06] px-2.5 text-[11.5px] text-ink-200 hover:bg-white/[0.1]">
@@ -259,6 +278,20 @@ export function LiveWatch() {
           </button>
         )}
       </div>
+      {mix && shownLines.length > 1 && (
+        <div className="mx-3 mb-2 space-y-1.5 rounded-xl bg-white/[0.03] px-2.5 py-2">
+          {shownLines.map(l => {
+            const v = levels[`${l.kind}:${l.name}`] ?? 100
+            return (
+              <label key={l.id} className="flex items-center gap-2 text-[11.5px] text-ink-300">
+                <span className="w-24 shrink-0 truncate" title={l.name}>{l.kind === 'mic' ? <Mic size={11} className="mr-1 inline" /> : null}{l.name}</span>
+                <input type="range" min={0} max={100} value={v} onChange={e => useLive.getState().setLevel(l, Number(e.target.value))} className="h-1 min-w-0 flex-1 accent-rose-500" aria-label={`Lautstärke ${l.name}`} />
+                <span className="w-8 shrink-0 text-right tabular-nums">{v}%</span>
+              </label>
+            )
+          })}
+        </div>
+      )}
       {error && <button onClick={() => useLive.getState().resume()} className="mx-3 rounded-lg bg-rose-500/10 px-2 py-1 text-left text-[11.5px] text-rose-200">{error}</button>}
       <LiveChat />
     </div>
