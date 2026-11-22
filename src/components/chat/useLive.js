@@ -50,7 +50,32 @@ export const QUALITIES = {
   max: { height: 1080, bitrate: 16_000_000, label: 'Beste', hint: '1080p, 16 Mbit/s pro Zuschauer: schnelle Leitung bei dir und den Zuschauern' },
 }
 const qualityOf = q => QUALITIES[q] || QUALITIES[720]
-const tune = sdp => sdp.replace(/a=fmtp:(\d+) (.*useinbandfec=1.*)/g, (line, pt, rest) => (/stereo=1/.test(rest) ? line : `a=fmtp:${pt} ${rest};stereo=1;sprop-stereo=1;maxaveragebitrate=160000`))
+const tuneAudio = sdp => sdp.replace(/a=fmtp:(\d+) (.*useinbandfec=1.*)/g, (line, pt, rest) => (/stereo=1/.test(rest) ? line : `a=fmtp:${pt} ${rest};stereo=1;sprop-stereo=1;maxaveragebitrate=160000`))
+/**
+ * Pictures start at 3 Mbit/s instead of WebRTC's 0.3 (that took half a minute to get sharp,
+ * the first seconds were 360p). Chrome reads it from the description's video codec lines.
+ */
+const START_KBPS = 3000
+function tuneVideo(sdp) {
+  const lines = sdp.split('\r\n')
+  const out = []
+  let video = false
+  const fmtp = new Set()
+  for (const l of lines) { const m = l.match(/^a=fmtp:(\d+) /); if (m) fmtp.add(m[1]) }
+  for (const l of lines) {
+    if (l.startsWith('m=')) video = l.startsWith('m=video')
+    const r = video && l.match(/^a=rtpmap:(\d+) (VP8|VP9|AV1|H264)\//i)
+    const f = video && l.match(/^a=fmtp:(\d+) (.*)$/)
+    if (f && !/x-google-start-bitrate/.test(f[2]) && lines.some(x => new RegExp(`^a=rtpmap:${f[1]} (VP8|VP9|AV1|H264)/`, 'i').test(x))) {
+      out.push(`${l};x-google-start-bitrate=${START_KBPS}`)
+      continue
+    }
+    out.push(l)
+    if (r && !fmtp.has(r[1])) out.push(`a=fmtp:${r[1]} x-google-start-bitrate=${START_KBPS}`)
+  }
+  return out.join('\r\n')
+}
+const tune = sdp => tuneVideo(tuneAudio(sdp))
 
 // ------------------------------------------------------------------ host side
 let hostCh = null
@@ -265,7 +290,8 @@ export const useLive = create((set, get) => ({
     const v = vstream?.getVideoTracks()[0]
     if (v) {
       try { v.contentHint = 'motion' } catch { /* old engine */ }
-      v.addEventListener('ended', () => { if (get().live) get().stop() }) // "Freigabe beenden" in the system bar
+      // "Freigabe beenden" in the system bar ends the live; a track swapped out (quality change) doesn't
+      v.addEventListener('ended', () => { if (get().live && host.vstream?.getVideoTracks()[0] === v) get().stop() })
       host.vstream = new MediaStream([v])
     }
     host.since = Date.now()
@@ -424,17 +450,21 @@ export const useLive = create((set, get) => ({
     host.quality = String(q)
     const to = qualityOf(q)
     if (live.video === 'screen' && host.native && to.height !== from.height && get().nativeScreen) {
+      const old = host.native
       try {
-        const n = await get().nativeScreen({ screen: host.native.screen, height: to.height, fps: 30 })
+        const n = await get().nativeScreen({ screen: old.screen, height: to.height, fps: 30 })
         const nt = n?.stream.getVideoTracks()[0]
-        if (nt) {
-          for (const v of viewers.values()) await v.videoSender?.replaceTrack(nt).catch(() => {})
-          host.native.drop?.() // the old one's track (the capture itself was replaced already)
-          host.native = { stop: n.stop, drop: n.drop, screen: host.native.screen }
-          host.video = n.stream
+        if (nt && get().live) {
+          try { nt.contentHint = 'motion' } catch { /* old engine */ }
+          // first the new picture everywhere, then the old track away (its end must not end the live)
           host.vstream = new MediaStream([nt])
+          host.video = n.stream
+          host.native = { stop: n.stop, drop: n.drop, screen: old.screen }
+          for (const v of viewers.values()) await v.videoSender?.replaceTrack(nt).catch(() => {})
+          old.drop?.() // only its track: the capture itself was replaced in Rust already
+          nt.addEventListener('ended', () => { if (get().live && host.vstream?.getVideoTracks()[0] === nt) get().stop() })
           set({ preview: host.vstream })
-        }
+        } else n?.stop()
       } catch (e) { get().onLog?.(`live: new picture size failed (${e?.message || e})`) }
     }
     for (const v of viewers.values()) {
