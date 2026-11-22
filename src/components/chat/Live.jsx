@@ -3,7 +3,7 @@
 // the website.
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Camera, Check, ChevronDown, ExternalLink, Eye, Gauge, Plus, Scissors, SlidersHorizontal, Headphones, Loader2, Mic, MicOff, Monitor, Radio, RefreshCw, Send, VideoOff, Volume2, VolumeX, X } from 'lucide-react'
-import { BUFFER_MAX, programOk, useLive } from './useLive'
+import { BUFFER_MAX, QUALITIES, programOk, useLive } from './useLive'
 import { useSocial } from './useSocial'
 import { PersonAvatar } from './Person'
 
@@ -56,7 +56,7 @@ export function GoLive({ convId = null, onDone }) {
   const [all, setAll] = useState(programOk && last.all !== false && !last.names?.length)
   const [picked, setPicked] = useState(() => new Set(last.names || []))
   const [mic, setMic] = useState(!!last.mic)
-  const [quality, setQuality] = useState(last.quality === '1080' ? '1080' : '720')
+  const [quality, setQuality] = useState(QUALITIES[last.quality] ? String(last.quality) : '1080')
   // the desktop app takes a screen straight from the graphics chip ('' = main screen,
   // 'pick' = the system's picker for a single window)
   const [screen, setScreen] = useState(typeof last.screen === 'string' && !last.screen.startsWith('window:') ? last.screen : '')
@@ -135,12 +135,7 @@ export function GoLive({ convId = null, onDone }) {
           <p className="mt-1 text-[11px] leading-snug text-amber-200/80">Das Fenster ist minimiert: solange gibt es kein Bild.</p>
         )}
         {video === 'screen' && (
-          <div className="mt-1.5 flex gap-1.5">
-            {[['720', 'Flüssig (720p)', 'Weniger Last für PC und Leitung'], ['1080', 'Scharf (1080p)', 'Schärfer, braucht mehr Leistung']].map(([q, label, hint]) => (
-              <button type="button" key={q} onClick={() => setQuality(q)} title={hint}
-                className={`h-7 flex-1 rounded-md border text-[11.5px] transition ${quality === q ? 'border-white/25 bg-white/[0.08] text-white' : 'border-white/[0.06] text-ink-400 hover:text-white'}`}>{label}</button>
-            ))}
-          </div>
+          <QualityPick value={quality} onChange={setQuality} />
         )}
       </div>
       <div>
@@ -316,6 +311,18 @@ function InStats({ video }) {
   )
 }
 
+/** Flüssig / Scharf / Beste (size and bits per viewer). */
+function QualityPick({ value, onChange }) {
+  return (
+    <div className="mt-1.5 flex gap-1.5">
+      {Object.entries(QUALITIES).map(([q, x]) => (
+        <button type="button" key={q} onClick={() => onChange(q)} title={x.hint}
+          className={`h-7 flex-1 rounded-md border text-[11.5px] transition ${String(value) === q ? 'border-white/25 bg-white/[0.08] text-white' : 'border-white/[0.06] text-ink-400 hover:text-white'}`}>{x.label}</button>
+      ))}
+    </div>
+  )
+}
+
 /** The programs whose sound goes out: remove one, add one (while live). */
 function LivePrograms({ live }) {
   const [adding, setAdding] = useState(false)
@@ -392,6 +399,7 @@ export function LiveHost() {
       <div className="px-3 pt-1 text-[11.5px] text-ink-400">
         {what(live)}{live.program ? ` · ${live.program}` : ''}{live.mic ? ' · Mikro' : ''}
       </div>
+      {live.video === 'screen' && <div className="px-3"><QualityPick value={live.quality || '720'} onChange={q => useLive.getState().setQuality(q)} /></div>}
       {(programOk || (live.programs || []).length > 0) && <LivePrograms live={live} />}
       {live.program && (
         <label className="flex items-center gap-2 px-3 pt-1.5 text-[11.5px] text-ink-400">

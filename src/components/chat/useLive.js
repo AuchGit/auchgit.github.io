@@ -40,6 +40,16 @@ const settings = () => load('settings', {})
 /** Clip length from the settings (30 s, 1 or 2 minutes). */
 const clipSeconds = () => ([30, 60, 120].includes(settings().liveClipSeconds) ? settings().liveClipSeconds : 60)
 const clipsOn = () => settings().liveClips !== false
+/**
+ * Picture quality of your live: size and how many bits per second each viewer gets.
+ * More bits = sharper in motion (games), but your upload carries it once per viewer.
+ */
+export const QUALITIES = {
+  720: { height: 720, bitrate: 4_500_000, label: 'Flüssig', hint: '720p, 4,5 Mbit/s pro Zuschauer' },
+  1080: { height: 1080, bitrate: 9_000_000, label: 'Scharf', hint: '1080p, 9 Mbit/s pro Zuschauer' },
+  max: { height: 1080, bitrate: 16_000_000, label: 'Beste', hint: '1080p, 16 Mbit/s pro Zuschauer: schnelle Leitung bei dir und den Zuschauern' },
+}
+const qualityOf = q => QUALITIES[q] || QUALITIES[720]
 const tune = sdp => sdp.replace(/a=fmtp:(\d+) (.*useinbandfec=1.*)/g, (line, pt, rest) => (/stereo=1/.test(rest) ? line : `a=fmtp:${pt} ${rest};stereo=1;sprop-stereo=1;maxaveragebitrate=160000`))
 
 // ------------------------------------------------------------------ host side
@@ -190,8 +200,8 @@ export const useLive = create((set, get) => ({
         // while gaming; the browser's capture gave ~10). screen 'pick': the system's picker.
         if (screen !== 'pick' && get().nativeScreen) {
           try {
-            const n = await get().nativeScreen({ screen: screen || null, height: quality === '1080' ? 1080 : 720, fps: 30 })
-            if (n) { vstream = n.stream; host.native = { stop: n.stop, screen: screen || null } }
+            const n = await get().nativeScreen({ screen: screen || null, height: qualityOf(quality).height, fps: 30 })
+            if (n) { vstream = n.stream; host.native = { stop: n.stop, drop: n.drop, screen: screen || null } }
           } catch (e) {
             get().onLog?.(`live: graphics-chip capture failed (${e?.message || e}), the picker instead`)
           }
@@ -199,7 +209,7 @@ export const useLive = create((set, get) => ({
         if (!vstream) {
           if (!navigator.mediaDevices?.getDisplayMedia) return fail('Bildschirm teilen geht hier nicht.')
           // 720p ("flüssig") or Full HD ("scharf"), 30 pictures: every viewer gets an encode of their own
-          const [w, h] = quality === '1080' ? [1920, 1080] : [1280, 720]
+          const h = qualityOf(quality).height, w = Math.round(h * 16 / 9)
           vstream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 30, max: 30 }, width: { max: w }, height: { max: h } }, audio: !progs.length })
         }
       } else if (video === 'cam') {
@@ -210,7 +220,7 @@ export const useLive = create((set, get) => ({
       return fail(/NotAllowed|Abort/i.test(String(e?.name || e)) ? null : video === 'cam' ? 'Keine Kamera gefunden.' : 'Bildschirm teilen hat nicht geklappt.')
     }
     host.video = vstream
-    host.quality = quality === '1080' ? '1080' : '720'
+    host.quality = QUALITIES[quality] ? String(quality) : '720'
     // H.264 only when the graphics chip encodes it; else VP8 (in software it beats H.264)
     host.h264 = vstream ? await h264Hardware() : null
     // every sound a line of its own
@@ -265,10 +275,10 @@ export const useLive = create((set, get) => ({
       host.clips = await get().nativeClips(host.native.screen).catch(() => null)
     }
     if (v && clipsOn() && !host.clips) {
-      const big = host.quality === '1080' && video === 'screen'
+      const big = qualityOf(host.quality).height > 720 && video === 'screen'
       host.clips = clipBuffer(new MediaStream([v, ...recDest.stream.getAudioTracks()]), { seconds: clipSeconds(), maxW: big ? 1920 : 1280, maxH: big ? 1080 : 720, bitrate: big ? 6_000_000 : 3_500_000 })
     }
-    const live = { since: host.since, clips: !!host.clips, video: v ? video : null, audio: sound || !!mic, mic: !!mic, program: progs.map(x => x.name).join(', ') || null, programs: progs.map(x => ({ pid: x.pid || 0, name: x.name || 'Programm' })), title: String(title || '').trim().slice(0, 80) }
+    const live = { since: host.since, quality: host.quality, clips: !!host.clips, video: v ? video : null, audio: sound || !!mic, mic: !!mic, program: progs.map(x => x.name).join(', ') || null, programs: progs.map(x => ({ pid: x.pid || 0, name: x.name || 'Programm' })), title: String(title || '').trim().slice(0, 80) }
     set({ live, starting: false, viewers: {}, chat: [], preview: host.vstream, hstats: {} })
     get()._announce()
     statsLogged = Date.now() - 10000 // first log line after ~20 s, when it has settled
@@ -402,6 +412,44 @@ export const useLive = create((set, get) => ({
     } catch { /* they come again */ }
   },
 
+  /**
+   * Quality while live: the bits per viewer at once; another picture size (graphics-chip
+   * capture) through a new capture whose track replaces the old one in every connection
+   * (nothing reconnects).
+   */
+  async setQuality(q) {
+    const live = get().live
+    if (!live || !QUALITIES[q] || host.quality === String(q)) return
+    const from = qualityOf(host.quality)
+    host.quality = String(q)
+    const to = qualityOf(q)
+    if (live.video === 'screen' && host.native && to.height !== from.height && get().nativeScreen) {
+      try {
+        const n = await get().nativeScreen({ screen: host.native.screen, height: to.height, fps: 30 })
+        const nt = n?.stream.getVideoTracks()[0]
+        if (nt) {
+          for (const v of viewers.values()) await v.videoSender?.replaceTrack(nt).catch(() => {})
+          host.native.drop?.() // the old one's track (the capture itself was replaced already)
+          host.native = { stop: n.stop, drop: n.drop, screen: host.native.screen }
+          host.video = n.stream
+          host.vstream = new MediaStream([nt])
+          set({ preview: host.vstream })
+        }
+      } catch (e) { get().onLog?.(`live: new picture size failed (${e?.message || e})`) }
+    }
+    for (const v of viewers.values()) {
+      const sn = v.videoSender
+      if (!sn) continue
+      try {
+        const p = sn.getParameters()
+        p.encodings = p.encodings?.length ? p.encodings : [{}]
+        p.encodings[0].maxBitrate = live.video === 'screen' ? to.bitrate : 2_500_000
+        await sn.setParameters(p)
+      } catch { /* closed */ }
+    }
+    set({ live: { ...get().live, quality: String(q) } })
+  },
+
   /** The chat of your live in a window of its own (the overlay shows it there). */
   setChatOut(on) { set({ chatOut: !!on && !!get().live }) },
 
@@ -467,18 +515,25 @@ export const useLive = create((set, get) => ({
     const vt = want === 'audio' ? null : host.vstream?.getVideoTracks()[0]
     if (vt) {
       const sender = pc.addTrack(vt, host.vstream)
+      v.videoSender = sender
       // H.264 first when the graphics chip encodes it (the CPU stays free for the game),
       // else VP8 (in software it looks better than H.264 and costs less)
       try {
         const tr = pc.getTransceivers().find(x => x.sender === sender)
         const codecs = RTCRtpSender.getCapabilities?.('video')?.codecs || []
-        const first = host.h264 === false ? /vp8/i : /h264/i
-        const lead = codecs.filter(c => first.test(c.mimeType))
-        if (tr?.setCodecPreferences && lead.length) tr.setCodecPreferences([...lead, ...codecs.filter(c => !first.test(c.mimeType))])
+        // screen and games: AV1, the sharpest for the same bits (measured 1080p30: ~21 ms a
+        // picture, fits; ~3x VP9's CPU, and that's per viewer: from the 4th viewer on VP9),
+        // then VP9, VP8 for whoever can't; H.264 first only when the graphics chip encodes it
+        const order = host.h264 === true ? [/h264/i, /av1/i, /vp9/i, /vp8/i]
+          : get().live?.video === 'screen' ? (viewers.size <= 3 ? [/av1/i, /vp9/i, /vp8/i, /h264/i] : [/vp9/i, /vp8/i, /h264/i])
+          : [/vp8/i, /vp9/i, /h264/i]
+        const rank = c => { const i = order.findIndex(re => re.test(c.mimeType)); return i < 0 ? order.length : i }
+        const sorted = [...codecs].sort((a, b) => rank(a) - rank(b))
+        if (tr?.setCodecPreferences && sorted.length) tr.setCodecPreferences(sorted)
       } catch { /* the engine picks */ }
       const p = sender.getParameters()
       p.encodings = p.encodings?.length ? p.encodings : [{}]
-      p.encodings[0].maxBitrate = get().live?.video === 'screen' ? (host.quality === '1080' ? 4_000_000 : 2_200_000) : 1_200_000
+      p.encodings[0].maxBitrate = get().live?.video === 'screen' ? qualityOf(host.quality).bitrate : 2_500_000
       p.encodings[0].maxFramerate = 30
       // smooth over sharp: with a bad line the picture gets softer, not choppy
       p.degradationPreference = 'maintain-framerate'
@@ -863,5 +918,5 @@ export const useLive = create((set, get) => ({
 export function liveSnapshot(s = useLive.getState()) {
   return { live: s.live, starting: s.starting, viewers: s.viewers, chat: s.chat, hstats: s.hstats, clipping: s.clipping, clipNote: s.clipNote, chatOut: s.chatOut, error: s.live || s.starting ? s.error : null }
 }
-export const LIVE_ACTIONS = ['start', 'stop', 'toggleMic', 'setProgramLevel', 'hostSay', 'clip', 'addProgram', 'removeProgram', 'setChatOut']
+export const LIVE_ACTIONS = ['start', 'stop', 'toggleMic', 'setProgramLevel', 'hostSay', 'clip', 'addProgram', 'removeProgram', 'setChatOut', 'setQuality']
 export const programOk = isTauri
