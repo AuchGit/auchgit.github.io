@@ -259,6 +259,7 @@ export const useLive = create((set, get) => ({
     let vstream = null
     try {
       if (video === 'screen') {
+        get().pauseReplay?.() // one capture is enough: clips come from the stream while live
         // the desktop app: pictures straight from the graphics chip (no picker, ~30 a second
         // while gaming; the browser's capture gave ~10). screen 'pick': the system's picker.
         if (screen !== 'pick' && get().nativeScreen) {
@@ -333,12 +334,9 @@ export const useLive = create((set, get) => ({
       host.vstream = new MediaStream([v])
     }
     host.since = Date.now()
-    // the last minute keeps being recorded for "Clip": from the graphics chip when the picture
-    // comes from there too (no second encode in the browser), else in the browser
-    if (v && clipsOn() && host.native && get().nativeClips) {
-      host.clips = await get().nativeClips(host.native.screen).catch(() => null)
-    }
-    if (v && clipsOn() && !host.clips) {
+    // the last minute of the stream itself keeps being recorded for "Clip" (no second capture:
+    // a running replay pauses while live, see pauseReplay)
+    if (v && clipsOn()) {
       const big = qualityOf(host.quality).height > 720 && video === 'screen'
       host.clips = clipBuffer(new MediaStream([v, ...recDest.stream.getAudioTracks()]), { seconds: clipSeconds(), maxW: big ? 1920 : 1280, maxH: big ? 1080 : 720, bitrate: big ? 6_000_000 : 3_500_000 })
     }
@@ -371,6 +369,7 @@ export const useLive = create((set, get) => ({
     get()._hostCleanup()
     set({ live: null, viewers: {}, preview: null, hstats: {}, clipping: false, chatOut: false })
     useSocial.getState().setLive(null)
+    get().resumeReplay?.()
   },
 
   _hostCleanup() {
