@@ -47,7 +47,7 @@ const clipsOn = () => settings().liveClips !== false
 export const QUALITIES = {
   720: { height: 720, bitrate: 4_500_000, label: 'Flüssig', hint: '720p, 4,5 Mbit/s pro Zuschauer' },
   1080: { height: 1080, bitrate: 9_000_000, label: 'Scharf', hint: '1080p, 9 Mbit/s pro Zuschauer' },
-  max: { height: 1080, bitrate: 16_000_000, label: 'Beste', hint: '1080p, 16 Mbit/s pro Zuschauer: schnelle Leitung bei dir und den Zuschauern' },
+  max: { height: 1080, bitrate: 25_000_000, label: 'Beste', hint: '1080p, bis 25 Mbit/s pro Zuschauer: schnelle Leitung bei dir und den Zuschauern' },
 }
 const qualityOf = q => QUALITIES[q] || QUALITIES[720]
 const tuneAudio = sdp => sdp.replace(/a=fmtp:(\d+) (.*useinbandfec=1.*)/g, (line, pt, rest) => (/stereo=1/.test(rest) ? line : `a=fmtp:${pt} ${rest};stereo=1;sprop-stereo=1;maxaveragebitrate=160000`))
