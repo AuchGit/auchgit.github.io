@@ -169,6 +169,7 @@ export const useLive = create((set, get) => ({
   chat: [],        // of your live
   wchat: [],       // of the live you watch
   error: null,
+  chatOut: false,  // your live's chat sits in a window of its own (overlay)
   mirror: false,   // overlays: the host side is the launcher window's
 
   // ================================================================== hosting
@@ -226,8 +227,11 @@ export const useLive = create((set, get) => ({
       dest.channelCount = 2
       node.connect(dest)
       node.connect(host.recMix)
-      host.lines.push({ kind, name, stream: dest.stream })
+      const l = { kind, name, stream: dest.stream }
+      host.lines.push(l)
+      return l
     }
+    host.addLine = line // programs added while live
     let sound = false
     const screenSound = vstream?.getAudioTracks()[0]
     if (screenSound) { line('screen', 'Bildschirm-Ton', ctx.createMediaStreamSource(new MediaStream([screenSound]))); sound = true }
@@ -239,7 +243,7 @@ export const useLive = create((set, get) => ({
           g.gain.value = (settings().liveProgramVolume ?? 100) / 100
           ctx.createMediaStreamSource(await takeProgram(pr, 'live')).connect(g)
           host.progGains.push(g)
-          line('program', pr.name || 'Programm', g)
+          Object.assign(line('program', pr.name || 'Programm', g), { pid: pr.pid || 0, gain: g })
         }
         sound = true
       } catch (e) { return fail(e.message) }
@@ -264,7 +268,7 @@ export const useLive = create((set, get) => ({
       const big = host.quality === '1080' && video === 'screen'
       host.clips = clipBuffer(new MediaStream([v, ...recDest.stream.getAudioTracks()]), { seconds: clipSeconds(), maxW: big ? 1920 : 1280, maxH: big ? 1080 : 720, bitrate: big ? 6_000_000 : 3_500_000 })
     }
-    const live = { since: host.since, clips: !!host.clips, video: v ? video : null, audio: sound || !!mic, mic: !!mic, program: progs.map(x => x.name).join(', ') || null, title: String(title || '').trim().slice(0, 80) }
+    const live = { since: host.since, clips: !!host.clips, video: v ? video : null, audio: sound || !!mic, mic: !!mic, program: progs.map(x => x.name).join(', ') || null, programs: progs.map(x => ({ pid: x.pid || 0, name: x.name || 'Programm' })), title: String(title || '').trim().slice(0, 80) }
     set({ live, starting: false, viewers: {}, chat: [], preview: host.vstream, hstats: {} })
     get()._announce()
     statsLogged = Date.now() - 10000 // first log line after ~20 s, when it has settled
@@ -291,7 +295,7 @@ export const useLive = create((set, get) => ({
     if (!get().live) return
     try { hostCh?.send({ type: 'broadcast', event: 'end', payload: {} }) } catch { /* gone */ }
     get()._hostCleanup()
-    set({ live: null, viewers: {}, preview: null, hstats: {}, clipping: false })
+    set({ live: null, viewers: {}, preview: null, hstats: {}, clipping: false, chatOut: false })
     useSocial.getState().setLive(null)
   },
 
@@ -309,7 +313,7 @@ export const useLive = create((set, get) => ({
     host.clips?.stop()
     host.native?.stop()
     host.ctx?.close().catch(() => {})
-    Object.assign(host, { lines: [], video: null, vstream: null, ctx: null, micRaw: null, micSrc: null, micGain: null, progGains: [], program: false, since: 0, recMix: null, clips: null, native: null })
+    Object.assign(host, { lines: [], video: null, vstream: null, ctx: null, micRaw: null, micSrc: null, micGain: null, progGains: [], program: false, since: 0, recMix: null, clips: null, native: null, addLine: null })
   },
 
   async _micOn() {
@@ -339,6 +343,67 @@ export const useLive = create((set, get) => ({
     }
     get()._announce()
   },
+
+  /**
+   * A program's sound joins while live: a line of its own; every viewer gets it in the running
+   * connection (a new offer, nothing reconnects) with a slider of its own.
+   */
+  async addProgram(src) {
+    const live = get().live
+    if (!live || !host.ctx || !host.addLine || !src) return
+    if ((live.programs || []).some(p => p.pid === (src.pid || 0))) return
+    let stream
+    // src.stream: a sound stream as it is (tests); else the program's sound from Windows
+    try { stream = src.stream || await takeProgram(src, 'live') } catch (e) { set({ error: e?.message || 'Der Programm-Sound ging nicht an.' }); return }
+    const g = host.ctx.createGain()
+    g.gain.value = (settings().liveProgramVolume ?? 100) / 100
+    host.ctx.createMediaStreamSource(stream).connect(g)
+    host.progGains.push(g)
+    host.program = true
+    const l = Object.assign(host.addLine('program', src.name || 'Programm', g), { pid: src.pid || 0, gain: g })
+    const programs = [...(get().live?.programs || []), { pid: src.pid || 0, name: src.name || 'Programm' }]
+    set({ live: { ...get().live, programs, program: programs.map(p => p.name).join(', '), audio: true }, error: null })
+    get()._announce()
+    const t = l.stream.getAudioTracks()[0]
+    for (const [key, v] of viewers) {
+      if (t) { try { v.senders.set(l.stream.id, v.pc.addTrack(t, l.stream)) } catch { /* closed */ } }
+      get()._reoffer(key, v)
+    }
+  },
+
+  /** A program's sound leaves while live (its line goes, viewers lose that slider). */
+  removeProgram(pid) {
+    const live = get().live
+    const i = host.lines.findIndex(l => l.kind === 'program' && (l.pid || 0) === pid)
+    if (!live || i < 0) return
+    const l = host.lines[i]
+    try { l.gain?.disconnect() } catch { /* gone */ }
+    host.progGains = host.progGains.filter(g => g !== l.gain)
+    host.lines.splice(i, 1)
+    dropProgram('live', pid).catch(() => {})
+    const programs = (live.programs || []).filter(p => p.pid !== pid)
+    set({ live: { ...live, programs, program: programs.map(p => p.name).join(', ') || null } })
+    get()._announce()
+    for (const [key, v] of viewers) {
+      const sn = v.senders?.get(l.stream.id)
+      if (sn) { try { v.pc.removeTrack(sn) } catch { /* closed */ } v.senders.delete(l.stream.id) }
+      get()._reoffer(key, v)
+    }
+  },
+
+  /** The running connection with what's sent now (lines added / removed). */
+  async _reoffer(key, v) {
+    // an offer still waiting for its answer: try again in a moment
+    if (v.pc.signalingState !== 'stable') { setTimeout(() => { if (viewers.get(key) === v) get()._reoffer(key, v) }, 400); return }
+    try {
+      const offer = await v.pc.createOffer()
+      await v.pc.setLocalDescription({ type: 'offer', sdp: tune(offer.sdp) })
+      hostCh?.send({ type: 'broadcast', event: 'sig', payload: { to: key, description: v.pc.localDescription.toJSON(), lines: get()._lines(v.want !== 'audio'), re: true } })
+    } catch { /* they come again */ }
+  },
+
+  /** The chat of your live in a window of its own (the overlay shows it there). */
+  setChatOut(on) { set({ chatOut: !!on && !!get().live }) },
 
   /** How loud the program sound goes out (0..150 %). */
   setProgramLevel(value) {
@@ -381,21 +446,27 @@ export const useLive = create((set, get) => ({
     if (after > before) get().onPeople?.('join')
   },
 
+  /** What each sent stream is (viewers name their sliders after it). */
+  _lines(withVideo) {
+    const lines = {}
+    for (const l of host.lines) lines[l.stream.id] = { kind: l.kind, name: l.name }
+    if (withVideo && host.vstream) lines[host.vstream.id] = { kind: 'video', name: 'Bild' }
+    return lines
+  },
+
   async _offer(key, uid, want) {
     const pc = new RTCPeerConnection({ iceServers: ICE })
-    const v = { pc, uid, want, at: Date.now() }
+    const v = { pc, uid, want, at: Date.now(), senders: new Map() }
     viewers.set(key, v)
-    const lines = {}
     for (const l of host.lines) {
       const t = l.stream.getAudioTracks()[0]
       if (!t) continue
-      pc.addTrack(t, l.stream)
-      lines[l.stream.id] = { kind: l.kind, name: l.name }
+      v.senders.set(l.stream.id, pc.addTrack(t, l.stream))
     }
+    const lines = get()._lines(want !== 'audio')
     const vt = want === 'audio' ? null : host.vstream?.getVideoTracks()[0]
     if (vt) {
       const sender = pc.addTrack(vt, host.vstream)
-      lines[host.vstream.id] = { kind: 'video', name: 'Bild' }
       // H.264 first when the graphics chip encodes it (the CPU stays free for the game),
       // else VP8 (in software it looks better than H.264 and costs less)
       try {
@@ -638,9 +709,22 @@ export const useLive = create((set, get) => ({
     if (++wtick % 5 === 0) watchCh?.send({ type: 'broadcast', event: 'wstat', payload: { from: watchKey, ...st } })
   },
 
-  async _watchSignal({ to, description, candidate, full, lines }) {
+  async _watchSignal({ to, description, candidate, full, lines, re }) {
     if (!watchKey || to !== watchKey) return
     if (full) { get().unwatch(); set({ error: 'Da schauen gerade zu viele zu. Gleich nochmal versuchen?' }); return }
+    // the host added or removed a sound line: same connection, new description
+    if (description?.type === 'offer' && re && watchPc && watchPc.signalingState === 'stable' && watchPc.connectionState !== 'failed') {
+      const known = lines && typeof lines === 'object' ? lines : {}
+      const list = Object.entries(known).filter(([, l]) => l?.kind && l.kind !== 'video').map(([id, l]) => ({ id, kind: String(l.kind), name: String(l.name || '').slice(0, 60) }))
+      for (const [id, n] of els) if (!list.some(l => l.id === id)) { n.stop(); els.delete(id) }
+      set({ lines: list })
+      const pc = watchPc
+      await pc.setRemoteDescription(description)
+      const answer = await pc.createAnswer()
+      await pc.setLocalDescription({ type: 'answer', sdp: tune(answer.sdp) })
+      watchCh?.send({ type: 'broadcast', event: 'sig', payload: { to: 'host', from: watchKey, description: pc.localDescription.toJSON() } })
+      return
+    }
     if (description?.type === 'offer') {
       if (watchPc) { try { watchPc.close() } catch { /* closed */ } }
       for (const n of els.values()) n.stop()
@@ -777,7 +861,7 @@ export const useLive = create((set, get) => ({
 
 /** For the overlay: the host side without pictures. */
 export function liveSnapshot(s = useLive.getState()) {
-  return { live: s.live, starting: s.starting, viewers: s.viewers, chat: s.chat, hstats: s.hstats, clipping: s.clipping, clipNote: s.clipNote, error: s.live || s.starting ? s.error : null }
+  return { live: s.live, starting: s.starting, viewers: s.viewers, chat: s.chat, hstats: s.hstats, clipping: s.clipping, clipNote: s.clipNote, chatOut: s.chatOut, error: s.live || s.starting ? s.error : null }
 }
-export const LIVE_ACTIONS = ['start', 'stop', 'toggleMic', 'setProgramLevel', 'hostSay', 'clip']
+export const LIVE_ACTIONS = ['start', 'stop', 'toggleMic', 'setProgramLevel', 'hostSay', 'clip', 'addProgram', 'removeProgram', 'setChatOut']
 export const programOk = isTauri

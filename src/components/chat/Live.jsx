@@ -2,7 +2,7 @@
 // The same parts in the launcher window (LiveDock), the overlay (window "live") and on
 // the website.
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Camera, Check, ChevronDown, Eye, Gauge, Scissors, SlidersHorizontal, Headphones, Loader2, Mic, MicOff, Monitor, Radio, RefreshCw, Send, VideoOff, Volume2, VolumeX, X } from 'lucide-react'
+import { Camera, Check, ChevronDown, ExternalLink, Eye, Gauge, Plus, Scissors, SlidersHorizontal, Headphones, Loader2, Mic, MicOff, Monitor, Radio, RefreshCw, Send, VideoOff, Volume2, VolumeX, X } from 'lucide-react'
 import { BUFFER_MAX, programOk, useLive } from './useLive'
 import { useSocial } from './useSocial'
 import { PersonAvatar } from './Person'
@@ -187,7 +187,7 @@ function Tick({ on, onClick, label, hint }) {
 }
 
 // ------------------------------------------------------------------ chat
-function LiveChat({ host = false }) {
+export function LiveChat({ host = false }) {
   const chat = useLive(s => (host ? s.chat : s.wchat))
   const uid = useSocial(s => s.session?.user?.id)
   const [text, setText] = useState('')
@@ -316,6 +316,43 @@ function InStats({ video }) {
   )
 }
 
+/** The programs whose sound goes out: remove one, add one (while live). */
+function LivePrograms({ live }) {
+  const [adding, setAdding] = useState(false)
+  const [sources, setSources] = useState([])
+  const list = live.programs || []
+  const everything = list.some(p => p.pid === 0)
+  const open = () => { setAdding(a => !a); calls.sources().then(setSources).catch(() => {}) }
+  const here = new Set(list.map(p => p.pid))
+  const chip = 'flex h-6 items-center gap-1 rounded-md bg-white/[0.06] pl-2 pr-1 text-[11.5px] text-ink-200'
+  return (
+    <div className="px-3 pt-1.5">
+      <div className="flex flex-wrap items-center gap-1">
+        {list.map(p => (
+          <span key={p.pid} className={chip} title={p.name}>
+            <span className="max-w-[120px] truncate">{p.name}</span>
+            <button onClick={() => useLive.getState().removeProgram(p.pid)} title="Den Sound rausnehmen" className="grid h-4 w-4 place-items-center rounded text-ink-400 hover:bg-white/10 hover:text-white"><X size={11} /></button>
+          </span>
+        ))}
+        {!everything && programOk && (
+          <button onClick={open} title="Den Sound eines Programms dazunehmen" className={`flex h-6 items-center gap-1 rounded-md px-2 text-[11.5px] ${adding ? 'bg-white/[0.1] text-white' : 'text-ink-400 hover:bg-white/[0.06] hover:text-white'}`}>
+            <Plus size={12} /> Programm
+          </button>
+        )}
+      </div>
+      {adding && !everything && (
+        <div className="mt-1 max-h-36 overflow-y-auto rounded-lg border border-white/[0.08] bg-white/[0.02] p-1">
+          {!list.length && <Tick on={false} onClick={() => { useLive.getState().addProgram({ pid: 0, name: 'Alles außer dem Launcher' }); setAdding(false) }} label="Alles außer dem Launcher" />}
+          {sources.filter(x => !here.has(x.pid)).map(x => (
+            <Tick key={x.pid} on={false} onClick={() => { useLive.getState().addProgram({ pid: x.pid, name: x.name }); setAdding(false) }} label={x.name} hint={x.active ? 'spielt gerade' : null} />
+          ))}
+          {!sources.filter(x => !here.has(x.pid)).length && <p className="px-2 py-1 text-[11px] text-ink-500">Gerade spielt kein weiteres Programm Sound ab.</p>}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ------------------------------------------------------------------ host / viewer panels
 export function LiveHost() {
   useNow()
@@ -327,6 +364,8 @@ export function LiveHost() {
   const [level, setLevel] = useState(() => load('settings', {}).liveProgramVolume ?? 100)
   const [sure, setSure] = useState(false)
   const [peek, setPeek] = useState(false)
+  const chatOut = useLive(s => s.chatOut)
+  const canOut = useLive(s => !!s.canDetachChat)
   if (!live) return null
   const list = Object.values(viewers)
   return (
@@ -336,6 +375,9 @@ export function LiveHost() {
         <span className="text-[12px] tabular-nums text-ink-300">{clock(live.since)}</span>
         <span className="flex items-center gap-1 text-[12px] text-ink-400" title={list.map(v => v.name).join(', ') || 'Noch niemand'}><Eye size={13} /> {list.length}</span>
         <div className="flex-1" />
+        {canOut && !chatOut && (
+          <button onClick={() => useLive.getState().setChatOut(true)} title="Chat als eigenes Fenster (im Overlay, über dem Spiel)" className={btn}><ExternalLink size={14} /></button>
+        )}
         {live.clips && <ClipButton />}
         <button onClick={() => useLive.getState().toggleMic()} title={live.mic ? 'Mikro aus' : 'Mikro an'} className={`${btn} ${live.mic ? '' : 'text-rose-300'}`}>{live.mic ? <Mic size={15} /> : <MicOff size={15} />}</button>
         <button onClick={() => { if (sure) useLive.getState().stop(); else { setSure(true); setTimeout(() => setSure(false), 3000) } }}
@@ -350,6 +392,7 @@ export function LiveHost() {
       <div className="px-3 pt-1 text-[11.5px] text-ink-400">
         {what(live)}{live.program ? ` · ${live.program}` : ''}{live.mic ? ' · Mikro' : ''}
       </div>
+      {(programOk || (live.programs || []).length > 0) && <LivePrograms live={live} />}
       {live.program && (
         <label className="flex items-center gap-2 px-3 pt-1.5 text-[11.5px] text-ink-400">
           Programm
@@ -362,7 +405,12 @@ export function LiveHost() {
       </div>
       {live.video && <OutStats />}
       {error && <p className="mx-3 rounded-lg bg-rose-500/10 px-2 py-1 text-[11.5px] text-rose-200">{error}</p>}
-      <LiveChat host />
+      {chatOut ? (
+        <div className="mx-3 mb-2 mt-auto flex items-center gap-2 rounded-lg bg-white/[0.04] px-2.5 py-2 text-[11.5px] text-ink-400">
+          <ExternalLink size={13} className="shrink-0" /> <span className="min-w-0 flex-1">Der Chat ist in einem eigenen Fenster.</span>
+          <button onClick={() => useLive.getState().setChatOut(false)} className="shrink-0 rounded-md px-1.5 py-0.5 font-medium text-ink-200 hover:bg-white/10">Zurückholen</button>
+        </div>
+      ) : <LiveChat host />}
     </div>
   )
 }
