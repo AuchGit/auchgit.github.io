@@ -2,7 +2,7 @@
 // The same parts in the launcher window (LiveDock), the overlay (window "live") and on
 // the website.
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Camera, ChevronDown, Eye, Headphones, Loader2, Mic, MicOff, Monitor, Radio, Send, VideoOff, Volume2, VolumeX, X } from 'lucide-react'
+import { Camera, Check, ChevronDown, Eye, Headphones, Loader2, Mic, MicOff, Monitor, Radio, RefreshCw, Send, VideoOff, Volume2, VolumeX, X } from 'lucide-react'
 import { programOk, useLive } from './useLive'
 import { useSocial } from './useSocial'
 import { PersonAvatar } from './Person'
@@ -52,7 +52,9 @@ export function GoLive({ convId = null, onDone }) {
   const canScreen = typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getDisplayMedia
   const firstVideo = last.video === 'cam' ? 'cam' : last.video === null ? null : canScreen ? 'screen' : null
   const [video, setVideo] = useState(firstVideo)
-  const [prog, setProg] = useState(programOk ? (last.prog === undefined ? 0 : last.prog) : null)
+  // program sound: everything but the launcher, or the ticked programs (remembered by name)
+  const [all, setAll] = useState(programOk && last.all !== false && !last.names?.length)
+  const [picked, setPicked] = useState(() => new Set(last.names || []))
   const [mic, setMic] = useState(!!last.mic)
   const [title, setTitle] = useState('')
   const [announce, setAnnounce] = useState(last.announce !== false)
@@ -60,12 +62,20 @@ export function GoLive({ convId = null, onDone }) {
   const starting = useLive(s => s.starting)
   const error = useLive(s => s.error)
   const mirror = useLive(s => s.mirror)
-  useEffect(() => { if (programOk) calls.sources().then(setSources).catch(() => {}) }, [])
-  const progSrc = prog == null ? null : prog === 0 ? { pid: 0, name: 'Alles außer dem Launcher' } : (s => (s ? { pid: s.pid, name: s.name } : null))(sources.find(x => x.pid === prog))
-  const ok = !!(video || progSrc || mic)
+  const scan = () => { if (programOk) calls.sources().then(setSources).catch(() => {}) }
+  useEffect(scan, [])
+  const keyOf = src => (src.exe || src.name || '').toLowerCase()
+  const chosen = all ? [{ pid: 0, name: 'Alles außer dem Launcher' }] : sources.filter(x => picked.has(keyOf(x))).map(x => ({ pid: x.pid, name: x.name }))
+  const flip = src => {
+    setAll(false)
+    const next = new Set(picked)
+    if (next.has(keyOf(src))) next.delete(keyOf(src)); else next.add(keyOf(src))
+    setPicked(next)
+  }
+  const ok = !!(video || chosen.length || mic)
   async function go() {
-    save('liveLast', { video, prog: prog != null && prog !== 0 ? 0 : prog, mic, announce })
-    await useLive.getState().start({ video, program: progSrc, mic, title, announce, convId })
+    save('liveLast', { video, all, names: all ? [] : [...picked], mic, announce })
+    await useLive.getState().start({ video, programs: chosen, mic, title, announce, convId })
     if (mirror || useLive.getState().live) onDone?.()
   }
   const choice = (val, Icon, label) => (
@@ -90,11 +100,17 @@ export function GoLive({ convId = null, onDone }) {
       <div>
         <div className="mb-1 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-ink-500">Ton</div>
         {programOk ? (
-          <select value={prog == null ? '' : String(prog)} onChange={e => setProg(e.target.value === '' ? null : Number(e.target.value))} className={`${field} bg-ink-900`}>
-            <option value="" className="bg-ink-800">Kein Programm-Sound</option>
-            <option value="0" className="bg-ink-800">Alles außer dem Launcher</option>
-            {sources.map(s => <option key={s.pid} value={String(s.pid)} className="bg-ink-800">{s.name}{s.active ? '' : ' (still)'}</option>)}
-          </select>
+          <div className="rounded-lg border border-white/[0.08] bg-white/[0.02] p-1">
+            <Tick on={all} onClick={() => { setAll(!all); if (!all) setPicked(new Set()) }} label="Alles außer dem Launcher" />
+            <div className="my-1 flex items-center gap-2 px-1.5 text-[10.5px] text-ink-500">
+              <span className="h-px flex-1 bg-white/[0.06]" /> oder nur diese <span className="h-px flex-1 bg-white/[0.06]" />
+              <button type="button" onClick={scan} title="Liste neu laden" className="grid h-5 w-5 place-items-center rounded text-ink-500 hover:text-white"><RefreshCw size={11} /></button>
+            </div>
+            <div className="max-h-32 overflow-y-auto">
+              {sources.map(x => <Tick key={x.pid} on={!all && picked.has(keyOf(x))} onClick={() => flip(x)} label={x.name} hint={x.active ? 'spielt gerade' : null} />)}
+              {!sources.length && <p className="px-2 py-1 text-[11px] text-ink-500">Gerade spielt kein Programm Sound ab.</p>}
+            </div>
+          </div>
         ) : video === 'screen' && <p className="text-[11.5px] text-ink-400">Im Auswahlfenster „Ton teilen“ anhaken, dann hören die anderen mit.</p>}
         <label className="mt-1.5 flex cursor-pointer items-center gap-2 text-[12.5px] text-ink-200">
           <input type="checkbox" checked={mic} onChange={e => setMic(e.target.checked)} className="h-4 w-4 accent-rose-500" /> Mikro an
@@ -111,6 +127,16 @@ export function GoLive({ convId = null, onDone }) {
         {starting ? <Loader2 size={15} className="animate-spin" /> : <Radio size={15} />} {ok ? 'Live gehen' : 'Wähl Bild oder Ton'}
       </button>
     </div>
+  )
+}
+
+function Tick({ on, onClick, label, hint }) {
+  return (
+    <button type="button" onClick={onClick} className="flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left text-[12.5px] hover:bg-white/[0.05]">
+      <span className={`grid h-4 w-4 shrink-0 place-items-center rounded border ${on ? 'border-rose-400 bg-rose-500 text-white' : 'border-white/25'}`}>{on && <Check size={11} strokeWidth={3} />}</span>
+      <span className={`min-w-0 flex-1 truncate ${on ? 'text-white' : 'text-ink-200'}`}>{label}</span>
+      {hint && <span className="shrink-0 text-[10.5px] text-emerald-300/80">{hint}</span>}
+    </button>
   )
 }
 
@@ -156,6 +182,7 @@ export function LiveHost() {
   const error = useLive(s => s.error)
   const [level, setLevel] = useState(() => load('settings', {}).liveProgramVolume ?? 100)
   const [sure, setSure] = useState(false)
+  const [peek, setPeek] = useState(false)
   if (!live) return null
   const list = Object.values(viewers)
   return (
@@ -169,7 +196,10 @@ export function LiveHost() {
         <button onClick={() => { if (sure) useLive.getState().stop(); else { setSure(true); setTimeout(() => setSure(false), 3000) } }}
           className={`h-8 shrink-0 rounded-lg px-2.5 text-[12px] font-semibold ${sure ? 'bg-rose-500 text-white' : 'bg-white/[0.07] text-rose-200 hover:bg-rose-500/20'}`}>{sure ? 'Wirklich?' : 'Beenden'}</button>
       </div>
-      {preview && !mirror && <Video stream={preview} className="aspect-video w-full shrink-0 bg-black object-contain" />}
+      {preview && !mirror && (live.video === 'cam' || peek)
+        ? <Video stream={preview} className="aspect-video w-full shrink-0 bg-black object-contain" />
+        : live.video === 'screen' && !mirror && <button onClick={() => setPeek(true)} className="mx-3 flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-white/[0.04] text-[11.5px] text-ink-400 hover:text-white"><Monitor size={13} /> Dein Bildschirm geht raus. Vorschau zeigen</button>}
+      {peek && live.video === 'screen' && !mirror && <button onClick={() => setPeek(false)} className="mx-3 mt-1 text-left text-[11px] text-ink-500 hover:text-white">Vorschau aus (spart Leistung)</button>}
       {live.title && <div className="truncate px-3 pt-1.5 text-[12.5px] font-medium">{live.title}</div>}
       <div className="px-3 pt-1 text-[11.5px] text-ink-400">
         {what(live)}{live.program ? ` · ${live.program}` : ''}{live.mic ? ' · Mikro' : ''}

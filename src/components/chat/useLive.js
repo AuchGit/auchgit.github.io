@@ -73,11 +73,12 @@ export const useLive = create((set, get) => ({
 
   // ================================================================== hosting
   /**
-   * Go live. video: 'screen' | 'cam' | null; program: { pid, name } (desktop app) or null;
+   * Go live. video: 'screen' | 'cam' | null; programs: [{ pid, name }] whose sound goes out (desktop app);
    * mic: true/false; title: what's on; announce: friends get a push notification;
    * convId: also say so in that chat (a card with "Zuschauen").
    */
-  async start({ video = null, program = null, mic = false, title = '', announce = true, convId = null } = {}) {
+  async start({ video = null, programs = [], program = null, mic = false, title = '', announce = true, convId = null } = {}) {
+    const progs = [...(programs || []), ...(program ? [program] : [])].filter(Boolean)
     if (get().live || get().starting || !supabase || !me()) return
     set({ starting: true, error: null })
     const fail = msg => { get()._hostCleanup(); set({ starting: false, error: msg }) }
@@ -85,7 +86,8 @@ export const useLive = create((set, get) => ({
     try {
       if (video === 'screen') {
         if (!navigator.mediaDevices?.getDisplayMedia) return fail('Bildschirm teilen geht hier nicht.')
-        vstream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 30, max: 60 } }, audio: !program })
+        // at most Full HD and 30 pictures: plenty for friends, and it keeps the PC and the upload calm
+        vstream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 30, max: 30 }, width: { max: 1920 }, height: { max: 1080 } }, audio: !progs.length })
       } else if (video === 'cam') {
         const cam = settings().callCamera
         vstream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: cam ? { exact: cam } : undefined, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } } })
@@ -104,13 +106,13 @@ export const useLive = create((set, get) => ({
     let sound = false
     const screenSound = vstream?.getAudioTracks()[0]
     if (screenSound) { ctx.createMediaStreamSource(new MediaStream([screenSound])).connect(host.dest); sound = true }
-    if (program) {
+    if (progs.length) {
+      host.progGain = ctx.createGain()
+      host.progGain.gain.value = (settings().liveProgramVolume ?? 100) / 100
+      host.progGain.connect(host.dest)
+      host.program = true // from here on, cleaning up gives the captures back
       try {
-        const ps = await takeProgram(program, 'live')
-        host.progGain = ctx.createGain()
-        host.progGain.gain.value = (settings().liveProgramVolume ?? 100) / 100
-        ctx.createMediaStreamSource(ps).connect(host.progGain).connect(host.dest)
-        host.program = true
+        for (const pr of progs) ctx.createMediaStreamSource(await takeProgram(pr, 'live')).connect(host.progGain)
         sound = true
       } catch (e) { return fail(e.message) }
     }
@@ -122,7 +124,7 @@ export const useLive = create((set, get) => ({
     }
     host.out = new MediaStream([...(v ? [v] : []), ...host.dest.stream.getAudioTracks()])
     host.since = Date.now()
-    const live = { since: host.since, video: v ? video : null, audio: sound || !!mic, mic: !!mic, program: program?.name || null, title: String(title || '').trim().slice(0, 80) }
+    const live = { since: host.since, video: v ? video : null, audio: sound || !!mic, mic: !!mic, program: progs.map(x => x.name).join(', ') || null, title: String(title || '').trim().slice(0, 80) }
     set({ live, starting: false, viewers: {}, chat: [], preview: v ? new MediaStream([v]) : null })
     get()._announce()
 
