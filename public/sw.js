@@ -10,8 +10,9 @@ self.addEventListener('push', e => {
   try { d = e.data ? e.data.json() : {} } catch { d = { body: e.data ? e.data.text() : '' } }
   e.waitUntil((async () => {
     // the chat is open and in front on this device: it shows the message itself
+    // (calls and tests always show)
     const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
-    if (!d.call && wins.some(w => w.focused && w.visibilityState === 'visible')) return
+    if (!d.call && !d.test && wins.some(w => w.focused && w.visibilityState === 'visible')) return
     await self.registration.showNotification(d.title || 'AuchGit', {
       body: d.body || '',
       tag: d.tag || undefined,

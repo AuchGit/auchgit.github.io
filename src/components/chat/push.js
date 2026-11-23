@@ -85,6 +85,24 @@ export async function disablePush() {
   await sub.unsubscribe().catch(() => {})
 }
 
+/**
+ * "Test" in the menu: signs this device up again (in case the server lost it), then has
+ * the server send one to all of your devices. Returns what to tell the person. A server
+ * without the test yet: this device shows one itself (checks at least the phone side).
+ */
+export async function testPush() {
+  if (Notification.permission !== 'granted') throw new Error('Benachrichtigungen sind auf diesem Gerät nicht erlaubt.')
+  await subscribe()
+  setFlag('on')
+  const { data, error } = await supabase.functions.invoke('push', { body: { type: 'test' } })
+  if (!error && data?.sent > 0) return 'Ist raus, sollte gleich oben auftauchen. Ton und Vibration stellst du in den Handy-Einstellungen bei der App ein.'
+  if (!error && data) throw new Error('Der Server kommt gerade nicht an dieses Gerät ran. Einmal aus- und wieder einschalten.')
+  const reg = await navigator.serviceWorker.getRegistration('/')
+  if (!reg) throw new Error('Geht in diesem Browser nicht.')
+  await reg.showNotification('Test', { body: 'So sehen neue Nachrichten aus.', tag: 'push-test', icon: '/icons/app-192.png', badge: '/icons/badge-96.png', vibrate: [120, 60, 120] })
+  return 'Angemeldet. Das hier kam vom Handy selbst, der Test über den Server folgt mit dem nächsten Server-Update.'
+}
+
 /** On every start: this device stays signed up (new login, new key, cleared server). */
 export async function refreshPush() {
   if (!pushSupported() || flag() !== 'on' || Notification.permission !== 'granted') return
