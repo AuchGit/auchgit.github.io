@@ -8,11 +8,13 @@
 //   Stage         all pictures: grid, focus with the rest below, or beside
 import { useEffect, useRef, useState } from 'react'
 import {
-  AppWindow, AudioLines, Check, ChevronDown, Columns2, Expand, Eye, EyeOff, GripHorizontal, HeadphoneOff, Headphones, LayoutGrid, LayoutTemplate,
-  Layers, Loader2, Maximize2, MessageSquare, Mic, MicOff, Minus, MonitorUp, Music2, PanelBottom, Phone, PhoneOff, PictureInPicture2, Pin, Plus, Rows2, Shrink,
-  SlidersHorizontal, Square, Upload, UserPlus, Video, VideoOff, Volume2, X,
+  AppWindow, AudioLines, Check, ChevronDown, Columns2, Eraser, Expand, Eye, EyeOff, GripHorizontal, HeadphoneOff, Headphones, LayoutGrid, LayoutTemplate,
+  Layers, Loader2, Maximize2, MessageSquare, Mic, MicOff, Minus, MonitorUp, Music2, PanelBottom, Pencil, Phone, PhoneOff, PictureInPicture2, Pin, Plus, RefreshCw, Rows2, Shrink,
+  SlidersHorizontal, Square, Upload, UserPlus, Users, Video, VideoOff, Volume2, X,
 } from 'lucide-react'
-import { SCREEN_MAX, useCall } from './useCall'
+import { SCREEN_MAX, callBus, useCall } from './useCall'
+import { canInk, useInk } from './useInk'
+import { InkAllow, InkBar, InkLayer, inkLabel } from './Ink'
 import { useSocial } from './useSocial'
 import { PersonAvatar } from './Person'
 import { GroupAvatar } from './ChatPanel'
@@ -57,34 +59,90 @@ function Btn({ on, danger, title, onClick, children, small }) {
 /** Program sound: desktop app only. */
 export function ProgramPicker() { return null }
 
-/** Screens, windows and tabs you share: add one (the system picker chooses), stop each. */
+/**
+ * Screens, windows and tabs you share: add one, stop each, say who may draw on it.
+ * Desktop app: a list of screens and windows (straight from the graphics chip, drawings
+ * land right there on your screen); else, and for anything else, the system picker.
+ */
 export function ScreenPicker({ onClose }) {
   const mine = useCall(s => s.myScreens) || []
   const mirror = useCall(s => s.mirror)
+  const sources = useCall(s => s.screenSources)
+  const sharing = useCall(s => s.sharing)
+  const members = useCall(s => s.members)
+  const [list, setList] = useState(null)
+  const [sound, setSound] = useState(() => load('callShareSound', false))
+  const [inkFor, setInkFor] = useState(null)
   const c = useCall.getState()
+  const reload = () => {
+    setList(null)
+    Promise.resolve(sources?.()).then(l => setList(l || { screens: [], windows: [] })).catch(() => setList({ screens: [], windows: [] }))
+  }
+  useEffect(() => { if (sources) reload() }, [sources]) // eslint-disable-line react-hooks/exhaustive-deps
+  const full = mine.length >= SCREEN_MAX
+  const pick = src => { c.shareScreen({ ...src, sound: sound && !sharing }); onClose() }
+  const head = 'flex items-center gap-1 px-2 pb-0.5 pt-1.5 text-[10.5px] font-semibold uppercase tracking-[0.1em] text-ink-500'
+  const opt = (key, label, sub, act) => (
+    <button key={key} disabled={full} onClick={act} title={label}
+      className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12.5px] hover:bg-white/[0.07] disabled:opacity-40">
+      <span className="min-w-0 flex-1 truncate">{label}{sub ? <span className="text-ink-500"> · {sub}</span> : null}</span>
+    </button>
+  )
   return (
-    <div className="w-64 rounded-xl border border-white/[0.08] bg-ink-900 p-1.5 shadow-lift" data-hit>
+    <div className="w-72 rounded-xl border border-white/[0.08] bg-ink-900 p-1.5 shadow-lift" data-hit>
       <div className="flex items-center justify-between px-2 pb-1 pt-1">
         <span className="text-[11px] font-semibold uppercase tracking-[0.1em] text-ink-400">Bildschirm teilen</span>
         <button className="text-ink-500 hover:text-white" onClick={onClose}><X size={13} /></button>
       </div>
       {mine.map(x => (
-        <div key={x.id} className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-[12.5px]">
-          <MonitorUp size={14} className="shrink-0 text-emerald-300" />
-          <span className="min-w-0 flex-1 truncate">{x.name}{x.sound ? <span className="text-ink-500"> · mit Ton</span> : null}</span>
-          <button onClick={() => c.stopScreen(x.id)} title="Nicht mehr teilen" className="grid h-6 w-6 place-items-center rounded-md text-rose-300 hover:bg-rose-500/10"><X size={13} /></button>
+        <div key={x.id}>
+          <div className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-[12.5px]">
+            <MonitorUp size={14} className="shrink-0 text-emerald-300" />
+            <span className="min-w-0 flex-1 truncate">{x.name}{x.sound ? <span className="text-ink-500"> · mit Ton</span> : null}{inkLabel(x.ink, members) ? <span className="text-brand-300"> · {inkLabel(x.ink, members)}</span> : null}</span>
+            <button onClick={() => setInkFor(f => (f === x.id ? null : x.id))} title="Wer darf darauf malen?"
+              className={`grid h-6 w-6 place-items-center rounded-md ${inkFor === x.id || inkLabel(x.ink, members) ? 'text-brand-300' : 'text-ink-400'} hover:bg-white/[0.08]`}><Pencil size={13} /></button>
+            <button onClick={() => c.stopScreen(x.id)} title="Nicht mehr teilen" className="grid h-6 w-6 place-items-center rounded-md text-rose-300 hover:bg-rose-500/10"><X size={13} /></button>
+          </div>
+          {inkFor === x.id && <div className="px-1 pb-1"><InkAllow id={x.id} /></div>}
         </div>
       ))}
       {mine.length > 0 && <div className="my-1 h-px bg-white/[0.06]" />}
-      {mirror
+      {sources ? (
+        !list ? <div className="py-3 text-center text-ink-500"><Loader2 size={14} className="inline animate-spin" /></div> : (
+          <div className="max-h-72 overflow-y-auto">
+            <div className={head}>Ganzer Bildschirm</div>
+            {list.screens.map(x => opt('s:' + x.id, x.label, null, () => pick({ screen: x.id, name: x.label.replace(/\s*\(.*$/, '') })))}
+            <div className={head}>
+              <span className="flex-1">Nur ein Fenster</span>
+              <button onClick={reload} title="Liste neu laden" className="grid h-5 w-5 place-items-center rounded text-ink-500 hover:text-white"><RefreshCw size={11} /></button>
+            </div>
+            {list.windows.length
+              ? list.windows.map(w => opt(w.id, w.title, w.exe?.replace(/\.exe$/i, ''), () => pick({ screen: w.id, name: w.title.slice(0, 40), pid: w.pid })))
+              : <p className="px-2 py-1 text-[12px] text-ink-500">Kein Fenster gefunden.</p>}
+          </div>
+        )
+      ) : mirror
         ? <p className="px-2 py-1.5 text-[12px] text-ink-400"></p>
         : (
-          <button disabled={mine.length >= SCREEN_MAX} onClick={() => { c.shareScreen(); onClose() }}
+          <button disabled={full} onClick={() => { c.shareScreen(); onClose() }}
             className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12.5px] hover:bg-white/[0.07] disabled:opacity-40">
             <Plus size={14} className="text-brand-300" /> {mine.length ? 'Noch einen teilen' : 'Bildschirm, Fenster oder Tab'}
           </button>
         )}
-      <p className="px-2 pb-1 pt-1.5 text-[11px] leading-snug text-ink-500">Mehrere gleichzeitig gehen (bis {SCREEN_MAX}). Ton kommt mit, wenn du ihn im Auswahlfenster anhakst.</p>
+      {sources && !sharing && (
+        <label className="mt-1 flex cursor-pointer items-center gap-2 px-2 py-1 text-[12px] text-ink-300">
+          <input type="checkbox" checked={sound} onChange={e => { setSound(e.target.checked); save('callShareSound', e.target.checked) }} className="accent-brand-500" />
+          Ton mitschicken
+        </label>
+      )}
+      {sources && !mirror && (
+        <button disabled={full} onClick={() => { c.shareScreen(); onClose() }} className="w-full rounded-lg px-2 py-1 text-left text-[11.5px] text-ink-400 hover:bg-white/[0.06] hover:text-white disabled:opacity-40">
+          Andere Auswahl (Fenster von Windows) …
+        </button>
+      )}
+      <p className="px-2 pb-1 pt-1.5 text-[11px] leading-snug text-ink-500">
+        {sources ? `Ein Fenster kommt ohne alles, was darüber liegt. Bis ${SCREEN_MAX} gleichzeitig. Mit dem Stift legst du fest, wer darauf malen darf.` : `Mehrere gleichzeitig gehen (bis ${SCREEN_MAX}). Ton kommt mit, wenn du ihn im Auswahlfenster anhakst. Mit dem Stift legst du fest, wer darauf malen darf.`}
+      </p>
     </div>
   )
 }
@@ -275,11 +333,64 @@ export function ViewMenu({ onClose }) {
   )
 }
 
-/** Small button that opens the view menu (not in the overlays: they only mirror the call). */
+/** In an overlay: the call in the launcher (big, full screen, corner) or this window big. */
+function MirrorViewMenu({ onClose }) {
+  const c = useCall.getState()
+  const go = v => { onClose(); c.setView(v); c.onLeaveOverlay?.() }
+  const row = (Icon, label, act) => (
+    <button key={label} onClick={act} className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12.5px] text-ink-200 hover:bg-white/[0.06] hover:text-white">
+      <Icon size={14} className="text-ink-400" /> <span className="flex-1">{label}</span>
+    </button>
+  )
+  return (
+    <div data-hit className="w-56 rounded-xl border border-white/[0.08] bg-ink-900 p-1.5 shadow-lift">
+      <div className="flex items-center justify-between px-2 pb-1 pt-1">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.1em] text-ink-400">Anruf zeigen</span>
+        <button className="text-ink-500 hover:text-white" onClick={onClose}><X size={13} /></button>
+      </div>
+      {c.onFull && row(Maximize2, 'Hier groß / klein', () => { onClose(); c.onFull() })}
+      {row(AppWindow, 'Im Launcher, groß', () => go('big'))}
+      {row(Expand, 'Im Launcher, Vollbild', () => go('full'))}
+      {row(PanelBottom, 'Im Launcher, in der Ecke', () => go('dock'))}
+    </div>
+  )
+}
+
+/** Full screen right away (in an overlay: its call window as big as the screen). */
+export function FullButton() {
+  const mirror = useCall(s => s.mirror)
+  const view = useCallView()
+  const canBig = useCall(s => !!s.onFull)
+  if (mirror ? !canBig : !CAN.full) return null
+  const full = !mirror && view === 'full'
+  const Icon = mirror ? Maximize2 : full ? Shrink : Expand
+  const act = () => {
+    if (mirror) return useCall.getState().onFull?.()
+    if (full) return viewBack()
+    useCall.setState({ fullSolo: false })
+    setCallView('full')
+  }
+  return (
+    <button onClick={act} title={mirror ? 'Fenster groß / klein' : full ? 'Vollbild verlassen' : 'Vollbild'}
+      className="grid h-6 w-6 place-items-center rounded-md text-ink-400 hover:bg-white/[0.07] hover:text-white"><Icon size={13} /></button>
+  )
+}
+
+/** Small button that opens the view menu (overlays: where the call shows). */
 export function ViewButton() {
   const mirror = useCall(s => s.mirror)
   const [open, setOpen] = useState(false)
-  if (mirror) return null
+  if (mirror) {
+    return (
+      <span className="relative">
+        <button onClick={() => setOpen(v => !v)} title="Anruf im Launcher zeigen oder hier groß"
+          className={`grid h-6 w-6 place-items-center rounded-md hover:bg-white/[0.07] hover:text-white ${open ? 'bg-white/[0.08] text-white' : 'text-ink-400'}`}>
+          <LayoutTemplate size={13} />
+        </button>
+        {open && <div className="absolute right-0 top-full z-40 mt-1"><MirrorViewMenu onClose={() => setOpen(false)} /></div>}
+      </span>
+    )
+  }
   return (
     <span className="relative">
       <button onClick={() => setOpen(v => !v)} title="Ansicht: Ecke, Chat, groß, Vollbild, Bild im Bild, Overlay"
@@ -357,6 +468,7 @@ export function CallControls({ compact = false, onMinimize }) {
           : <span className="text-[11px] tabular-nums text-ink-400">{since(call.since)}</span>}
         {onMinimize && <button className={head} title="Kleiner" onClick={onMinimize}><Minus size={13} /></button>}
         <CallInviteButton />
+        <FullButton />
         <ViewButton />
       </div>
       <ul className="min-h-0 flex-1 overflow-y-auto px-1.5 py-1">
@@ -391,7 +503,7 @@ export function LiveBadge({ className = '' }) {
   if (!call || (!sharing && !myScreens.length)) return null
   const c = useCall.getState()
   const parts = [
-    ...myScreens.map(x => ({ key: x.id, label: `${x.name}${x.sound ? ' mit Ton' : ''}`, stop: () => c.stopScreen(x.id) })),
+    ...myScreens.map(x => ({ key: x.id, label: `${x.name}${x.sound ? ' mit Ton' : ''}${x.ink && x.ink !== 'none' ? ', Malen an' : ''}`, stop: () => c.stopScreen(x.id), wipe: x.ink && x.ink !== 'none' ? () => c.inkClear(x.id) : null })),
     sharing && { key: 'program', label: `Ton: ${sharing.name}`, stop: () => c.shareProgram(null) },
   ].filter(Boolean)
   return (
@@ -406,6 +518,7 @@ export function LiveBadge({ className = '' }) {
       {parts.map(p => (
         <span key={p.key} className="flex shrink-0 items-center gap-1 rounded-full bg-white/[0.07] py-0.5 pl-2 pr-0.5 text-ink-100">
           {p.label}
+          {p.wipe && <button onClick={p.wipe} title="Alles wegwischen, was darauf gemalt wurde" className="grid h-4 w-4 place-items-center rounded-full text-ink-400 hover:bg-white/10 hover:text-white"><Eraser size={10} /></button>}
           <button onClick={p.stop} title="Nicht mehr teilen" className="grid h-4 w-4 place-items-center rounded-full text-ink-400 hover:bg-white/10 hover:text-white"><X size={10} /></button>
         </span>
       ))}
@@ -498,7 +611,7 @@ function sharedScreens(screens, members) {
   for (const [id, m] of Object.entries(members || {})) {
     for (const x of m.screens || []) {
       const stream = screens?.[id]?.[x.id]
-      if (stream) out.push({ key: `${id}:${x.id}`, stream, label: `${m.name || 'Jemand'}: ${x.name}`, screen: true })
+      if (stream) out.push({ key: `${id}:${x.id}`, stream, label: `${m.name || 'Jemand'}: ${x.name}`, screen: true, ink: `${id}:${x.id}` })
     }
   }
   return out
@@ -515,7 +628,7 @@ function useTiles() {
   const camera = useCall(s => s.camera)
   const me = useSocial(s => s.me)
   const out = []
-  for (const x of myScreens) if (screens.me?.[x.id]) out.push({ key: 'me:' + x.id, stream: screens.me[x.id], label: `Du: ${x.name}`, screen: true, own: true, stop: () => useCall.getState().stopScreen(x.id) })
+  for (const x of myScreens) if (screens.me?.[x.id]) out.push({ key: 'me:' + x.id, stream: screens.me[x.id], label: `Du: ${x.name}`, screen: true, own: true, ink: me?.id ? `${me.id}:${x.id}` : null, inkId: x.id, stop: () => useCall.getState().stopScreen(x.id) })
   out.push(...sharedScreens(screens, members))
   if (!camera || selfView) {
     const name = me?.player_name || 'Du'
@@ -532,43 +645,83 @@ function focusOf(tiles, pinned) {
     || tiles.find(t => !t.own && t.speaking) || tiles.find(t => !t.own && t.stream) || tiles.find(t => !t.own) || tiles[0]
 }
 
-function CallTile({ t, pinned, small }) {
+function CallTile({ t, pinned, small, full }) {
   const ref = useRef(null)
   useEffect(() => { if (ref.current) ref.current.srcObject = t.stream || null }, [t.stream])
+  const mirror = useCall(s => s.mirror)
+  const may = useCall(c => !c.mirror && !!t.ink && !!t.stream && canInk(t.ink, callBus.me(), c))
+  const drawing = useInk(s => !!t.ink && s.drawOn === t.ink)
+  const inkLow = useInk(s => !!s.tool.low)
+  const [narrow, setNarrow] = useState(false)
+  const box = useRef(null)
+  useEffect(() => {
+    if (!drawing || !box.current) return
+    const ro = new ResizeObserver(() => setNarrow((box.current?.clientWidth || 0) < 640))
+    ro.observe(box.current)
+    return () => ro.disconnect()
+  }, [drawing])
+  const allowed = useCall(c => (t.own && t.inkId ? c.myScreens.find(x => x.id === t.inkId)?.ink || 'none' : null))
   const tool = 'grid h-7 w-7 place-items-center rounded-lg bg-black/60 hover:bg-black/80'
+  const c = useCall.getState()
+  const goFull = () => {
+    if (mirror) { c.onFull?.(); return }
+    if (full) { viewBack(); return }
+    useCall.setState({ pinned: t.key, fullSolo: true })
+    setCallView('full')
+  }
+  const draw = () => {
+    useInk.getState().setDraw(t.ink)
+    useCall.setState({ pinned: t.key })
+    if (small && !full) setCallView('big') // drawing wants room
+  }
   return (
-    <div onClick={() => useCall.getState().pin(t.key)} title={pinned ? 'Lösen' : 'Groß anheften'}
-      className={`group relative h-full w-full cursor-pointer overflow-hidden rounded-xl ring-2 transition ${t.screen || t.stream ? 'bg-black' : 'bg-ink-850'} ${t.speaking ? 'ring-emerald-400' : pinned ? 'ring-brand-400/70' : 'ring-transparent'}`}>
+    <div ref={box} onClick={() => { if (!drawing) c.pin(t.key) }} onDoubleClick={() => { if (!drawing && t.stream) goFull() }}
+      title={drawing ? undefined : `${pinned ? 'Lösen' : 'Groß anheften'}${t.stream ? ', Doppelklick: Vollbild' : ''}`}
+      className={`group relative h-full w-full cursor-pointer overflow-hidden rounded-xl ring-2 transition ${t.screen || t.stream ? 'bg-black' : 'bg-ink-850'} ${drawing ? 'ring-brand-400' : t.speaking ? 'ring-emerald-400' : pinned ? 'ring-brand-400/70' : 'ring-transparent'}`}>
       {t.stream
         ? <video ref={ref} autoPlay playsInline muted className={`h-full w-full ${t.screen ? 'object-contain' : 'object-cover'} ${t.mirror ? '-scale-x-100' : ''}`} />
         : <div className="grid h-full place-items-center"><PersonAvatar id={t.id} name={t.name} url={t.avatar} size={small ? 36 : 72} /></div>}
-      <span className={`absolute bottom-1.5 left-1.5 flex max-w-[calc(100%-12px)] items-center gap-1 rounded-md bg-black/60 px-1.5 py-0.5 font-medium ${small ? 'text-[10.5px]' : 'text-[12px]'}`}>
+      {t.ink && t.stream && !mirror && <InkLayer s={t.ink} video={ref} drawing={drawing} />}
+      <span className={`pointer-events-none absolute bottom-1.5 left-1.5 flex max-w-[calc(100%-80px)] items-center gap-1 rounded-md bg-black/60 px-1.5 py-0.5 font-medium ${small ? 'text-[10.5px]' : 'text-[12px]'}`}>
         {t.screen && <MonitorUp size={11} className="shrink-0" />}{pinned && <Pin size={10} className="shrink-0 text-brand-300" />}
         <span className="truncate">{t.label || t.name}</span>
         {t.muted && <MicOff size={10} className="shrink-0 text-rose-300" />}
       </span>
-      {(t.stop || t.hide) && (
+      {drawing && <div className={`absolute inset-x-1.5 z-10 flex justify-center ${inkLow ? 'bottom-1.5' : 'top-1.5'}`}><InkBar s={t.ink} compact={small || narrow} /></div>}
+      {!drawing && (
         <div className="absolute right-1.5 top-1.5 flex gap-1 opacity-0 transition group-hover:opacity-100">
+          {t.own && t.inkId && !mirror && (
+            <button onClick={e => { e.stopPropagation(); c.setInk(t.inkId, allowed === 'none' ? 'all' : 'none') }}
+              title={allowed === 'none' ? 'Alle im Anruf darauf malen lassen (wer genau: unter Teilen)' : 'Niemand mehr darauf malen lassen'}
+              className={`${tool} ${allowed !== 'none' ? 'text-brand-300' : 'text-white'}`}><Users size={14} /></button>
+          )}
           {t.stop && <button onClick={e => { e.stopPropagation(); t.stop() }} title="Nicht mehr teilen" className={`${tool} text-rose-200`}><X size={14} /></button>}
           {t.hide && <button onClick={e => { e.stopPropagation(); t.hide() }} title="Eigenes Bild ausblenden (die anderen sehen dich weiter)" className={`${tool} text-white`}><EyeOff size={14} /></button>}
+          {t.stream && (!mirror || c.onFull) && <button onClick={e => { e.stopPropagation(); goFull() }} title={mirror ? 'Fenster groß / klein' : full ? 'Vollbild verlassen' : 'Vollbild'} className={`${tool} text-white`}>{full ? <Shrink size={14} /> : <Expand size={14} />}</button>}
         </div>
+      )}
+      {may && !drawing && (
+        <button onClick={e => { e.stopPropagation(); draw() }} onDoubleClick={e => e.stopPropagation()} title={t.own ? 'Selbst darauf malen' : 'Auf dieses Bild malen: erscheint auch bei der Person, die teilt'}
+          className={`absolute bottom-1.5 right-1.5 flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-white transition ${t.own ? 'bg-black/60 opacity-0 hover:bg-black/80 group-hover:opacity-100' : 'bg-brand-500/90 hover:bg-brand-400'}`}>
+          <Pencil size={11} /> Malen
+        </button>
       )}
     </div>
   )
 }
 
 /** All pictures in the chosen arrangement, filling the space it gets. `solo`: only the big one. */
-export function Stage({ layout = 'grid', small = false, solo = false }) {
+export function Stage({ layout = 'grid', small = false, solo = false, full = false }) {
   const tiles = useTiles()
   const pinned = useCall(s => s.pinned)
   if (!tiles.length) return null
-  if (solo) { const main = focusOf(tiles, pinned); return <CallTile t={main} pinned={pinned === main.key} small={small} /> }
+  if (solo) { const main = focusOf(tiles, pinned); return <CallTile t={main} pinned={pinned === main.key} small={small} full={full} /> }
   if (layout === 'grid' || tiles.length === 1) {
     const n = tiles.length
     const cols = n <= 1 ? 1 : n <= 4 ? 2 : n <= 9 ? 3 : 4
     return (
       <div className="grid h-full w-full gap-2" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gridAutoRows: 'minmax(0, 1fr)' }}>
-        {tiles.map(t => <CallTile key={t.key} t={t} pinned={pinned === t.key} small={small || n > 4} />)}
+        {tiles.map(t => <CallTile key={t.key} t={t} pinned={pinned === t.key} small={small || n > 4} full={full} />)}
       </div>
     )
   }
@@ -577,10 +730,10 @@ export function Stage({ layout = 'grid', small = false, solo = false }) {
   const side = layout === 'side'
   return (
     <div className={`flex h-full w-full gap-2 ${side ? 'flex-row' : 'flex-col'}`}>
-      <div className="min-h-0 min-w-0 flex-1"><CallTile t={main} pinned={pinned === main.key} small={small} /></div>
+      <div className="min-h-0 min-w-0 flex-1"><CallTile t={main} pinned={pinned === main.key} small={small} full={full} /></div>
       <div className={`flex shrink-0 gap-2 overflow-auto ${side ? 'w-[24%] min-w-[110px] flex-col' : 'h-[24%] min-h-[64px]'}`}>
         {rest.map(t => (
-          <div key={t.key} className={`shrink-0 ${side ? 'aspect-video w-full' : 'aspect-video h-full'}`}><CallTile t={t} pinned={pinned === t.key} small /></div>
+          <div key={t.key} className={`shrink-0 ${side ? 'aspect-video w-full' : 'aspect-video h-full'}`}><CallTile t={t} pinned={pinned === t.key} small full={full} /></div>
         ))}
       </div>
     </div>
@@ -681,6 +834,7 @@ export function CallInChat({ convId }) {
           ))}
         </span>
         <CallInviteButton />
+        <FullButton />
         <ViewButton />
       </div>
       {pictures && <div style={{ height: h }} className="px-2 pt-2"><Stage layout={layout} small /></div>}
@@ -727,12 +881,13 @@ export function CallPage() {
 function CallFull() {
   const layout = useCall(s => s.layout)
   const call = useCall(s => s.call)
+  const solo = useCall(s => !!s.fullSolo)
   const act = useActivity(s => !!s.act)
   useTick(!!call)
   useEffect(() => {
     const key = e => { if (e.key === 'Escape') viewBack() }
     window.addEventListener('keydown', key)
-    return () => window.removeEventListener('keydown', key)
+    return () => { window.removeEventListener('keydown', key); useCall.setState({ fullSolo: false }) }
   }, [])
   if (!call) return null
   return (
@@ -740,8 +895,11 @@ function CallFull() {
       <div className="absolute left-4 top-3 z-10 flex items-center gap-2 rounded-full bg-black/50 px-3 py-1 text-[12px] backdrop-blur">
         <Phone size={12} className="text-emerald-400" /> {call.title} <span className="tabular-nums text-ink-400">{since(call.since)}</span>
       </div>
-      <button onClick={() => viewBack()} title="Vollbild verlassen (Esc)" className="absolute right-4 top-3 z-10 grid h-9 w-9 place-items-center rounded-full bg-black/50 text-white backdrop-blur hover:bg-black/70"><Shrink size={16} /></button>
-      <div className="min-h-0 flex-1 pb-16 pt-10">{act ? <div className="h-full overflow-hidden rounded-xl bg-ink-900"><Activity /></div> : <Stage layout={layout} />}</div>
+      <div className="absolute right-4 top-3 z-10 flex gap-2">
+        {solo && <button onClick={() => useCall.setState({ fullSolo: false })} title="Alle Bilder zeigen" className="grid h-9 w-9 place-items-center rounded-full bg-black/50 text-white backdrop-blur hover:bg-black/70"><LayoutGrid size={16} /></button>}
+        <button onClick={() => viewBack()} title="Vollbild verlassen (Esc)" className="grid h-9 w-9 place-items-center rounded-full bg-black/50 text-white backdrop-blur hover:bg-black/70"><Shrink size={16} /></button>
+      </div>
+      <div className="min-h-0 flex-1 pb-16 pt-10">{act ? <div className="h-full overflow-hidden rounded-xl bg-ink-900"><Activity /></div> : <Stage layout={layout} solo={solo} full />}</div>
       <div className="absolute inset-x-0 bottom-4 flex justify-center"><ControlBar floating /></div>
     </div>
   )

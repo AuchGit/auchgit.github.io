@@ -61,8 +61,23 @@ export const SCREEN_MAX = 4
 
 let channel = null
 let ctx = null
+let viewHook = null // launcher: where the call shows (components/call/host.js)
+let nativeN = 0
+
+/**
+ * Other things on the call channel hook in here (drawing on shared screens, store/useInk.js):
+ * `send(event, payload)` goes to everyone else in the call, `on[event]` gets what they send.
+ */
+export const callBus = {
+  on: {},
+  send(event, payload) { channel?.send({ type: 'broadcast', event, payload }) },
+  me: () => me(),
+}
+
+/** The launcher window says where the call can show (overlays ask for it with setView). */
+export function onCallView(fn) { viewHook = fn }
 let meterTimer = null
-const local = { micRaw: null, micSource: null, micGain: null, micAnalyser: null, micSend: null, out: null, progStream: null, progNode: null, progChannel: null, camStream: null, screens: new Map(), boardGain: null, boardMon: null, boardSend: null }
+const local = { micRaw: null, micSource: null, micGain: null, micAnalyser: null, micSend: null, out: null, progStream: null, progNode: null, progChannel: null, camStream: null, screens: new Map(), native: new Map(), boardGain: null, boardMon: null, boardSend: null }
 const boardCache = new Map() // sound id -> AudioBuffer
 const boardSources = new Set()
 let ringOutTimer = null
@@ -236,6 +251,7 @@ export const useCall = create((set, get) => ({
         if (!get().outgoing) return
         if (get().call?.kind === 'direct') { get().onNotice?.(`${payload?.name || 'Die andere Seite'} hat abgelehnt.`); get().leave() }
       })
+      .on('broadcast', { event: 'ink' }, ({ payload }) => { callBus.on.ink?.(payload) })
       .on('presence', { event: 'sync' }, () => get()._sync())
       .subscribe(status => { if (status === 'SUBSCRIBED') get()._announce() })
     meterTimer = setInterval(() => get()._meter(), 120)
@@ -249,6 +265,8 @@ export const useCall = create((set, get) => ({
     if (get().sharing) get().shareProgram(null).catch(() => {})
     get().stopBoard()
     // (program sound is shared with going live: shareProgram(null) above gives it back)
+    for (const cap of local.native.values()) cap.stop()
+    local.native.clear()
     for (const s of [local.micRaw, local.camStream, ...local.screens.values()]) s?.getTracks().forEach(t => t.stop())
     local.screens.clear()
     try { local.micSource?.disconnect() } catch { /* gone */ }
@@ -262,7 +280,7 @@ export const useCall = create((set, get) => ({
   _announce() {
     const s = useSocial.getState()
     const { muted, deaf, camera, sharing } = get()
-    channel?.track({ name: s.me?.player_name || '', avatar: s.me?.avatar_url || null, muted: muted || !local.micRaw, deaf, video: camera, stream: sharing?.name || null, screens: get().myScreens, guests: get().guests })
+    channel?.track({ name: s.me?.player_name || '', avatar: s.me?.avatar_url || null, muted: muted || !local.micRaw, deaf, video: camera, stream: sharing?.name || null, screens: get().myScreens.map(({ id, name, sound, ink }) => ({ id, name, sound, ink: ink || 'none' })), guests: get().guests })
   },
 
   /** Bring friends into the call (they don't have to be in its chat): it rings for them. */
@@ -573,10 +591,13 @@ export const useCall = create((set, get) => ({
   /**
    * Share a screen, a window or a tab (the system picker chooses), with its sound
    * when the picker offers it. Several at once are fine; each one stops on its own.
+   * src (desktop app): { screen: '' | device name | 'window:<handle>', name, pid?, sound? }
+   * comes straight from the graphics chip, without a picker.
    */
-  async shareScreen() {
+  async shareScreen(src = null) {
     if (!get().call) return
     if (local.screens.size >= SCREEN_MAX) { set({ error: `Mehr als ${SCREEN_MAX} gleichzeitig geht nicht.` }); return }
+    if (src && get().nativeScreen) return get()._shareNative(src)
     if (!navigator.mediaDevices?.getDisplayMedia) { set({ error: 'Bildschirm teilen geht hier nicht.' }); return }
     let stream
     try {
@@ -597,6 +618,43 @@ export const useCall = create((set, get) => ({
     await get()._renegotiateAdd(stream, 'screen:' + stream.id)
     get()._announce()
   },
+
+  /**
+   * A screen or one window from the graphics chip (~30 pictures a second while gaming, the
+   * browser's capture gave ~10). Drawings of the others land exactly there (useInk + Rust ink.rs).
+   */
+  async _shareNative(src) {
+    const key = 'call:' + (++nativeN)
+    let cap = null
+    try { cap = await get().nativeScreen({ screen: src.screen || '', height: 1080, fps: 30, key }) } catch { /* below */ }
+    if (!cap) { set({ error: 'Bildschirm teilen hat nicht geklappt.' }); return }
+    if (!get().call) { cap.stop(); return }
+    const stream = cap.stream
+    local.screens.set(stream.id, stream)
+    local.native.set(stream.id, cap)
+    const name = src.name || 'Bildschirm'
+    set({
+      myScreens: [...get().myScreens, { id: stream.id, name, sound: !!src.sound, ink: 'none', native: { target: src.screen || '', w: cap.width, h: cap.height } }],
+      screens: { ...get().screens, me: { ...(get().screens.me || {}), [stream.id]: stream } },
+      error: null,
+    })
+    await get()._renegotiateAdd(stream, 'screen:' + stream.id)
+    get()._announce()
+    // its sound: the window's program, for a whole screen everything but the call
+    if (src.sound && !get().sharing) get().shareProgram({ pid: src.pid || 0, name: src.pid ? name : 'Alles außer dem Anruf' }).catch(() => {})
+  },
+
+  /** Who may draw on a screen you share: 'none' | 'all' | [userId]. */
+  setInk(id, who) {
+    set({ myScreens: get().myScreens.map(x => (x.id === id ? { ...x, ink: who } : x)) })
+    get()._announce()
+  },
+
+  /** Wipes every drawing off a screen you share (store/useInk.js listens). */
+  inkClear(id) { callBus.on.inkClear?.(id) },
+
+  /** Overlays: show the call somewhere else in the launcher ('big', 'full', 'dock' …). */
+  setView(v) { viewHook?.(v) },
 
   /** How the pictures are arranged. */
   setLayout(layout) {
@@ -685,6 +743,8 @@ export const useCall = create((set, get) => ({
       const st = local.screens.get(sid)
       if (!st) continue
       get()._removeKind('screen:' + sid)
+      local.native.get(sid)?.stop()
+      local.native.delete(sid)
       st.getTracks().forEach(t => t.stop())
       local.screens.delete(sid)
     }
