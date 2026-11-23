@@ -10,8 +10,10 @@
 //   del    ids (your own strokes; the sharer may take any)
 //   clear  everything on one screen (only its sharer)
 //   ask    someone new wants what's there; the sharer answers with `all`
+//   req    may I draw? (the sharer sees it, useCall `inkAsks` / `inkAnswer`); `no` if not
 import { create } from 'zustand'
 import { callBus, useCall } from './useCall'
+import { useSocial } from './useSocial'
 // small settings in this browser (same keys as the launcher)
 const PREFIX = 'auch.'
 const load = (k, d) => { try { const r = localStorage.getItem(PREFIX + k); return r == null ? d : JSON.parse(r) } catch { return d } }
@@ -90,6 +92,7 @@ export const useInk = create((set, get) => ({
   strokes: {},  // screen key "owner:streamId" -> [{ id, by, tool, color, size, fade, done, doneAt, pts }]
   tool: { tool: 'pen', color: INK_COLORS[0], size: 1, fade: false, ...load('inkTool', {}) },
   drawOn: null, // the screen you paint on right now
+  asked: {},    // screen -> when you asked to draw on it ('no': the sharer said no)
 
   setTool(patch) {
     const tool = { ...get().tool, ...patch }
@@ -97,6 +100,14 @@ export const useInk = create((set, get) => ({
     set({ tool })
   },
   setDraw(s) { if (!s) get().end(); set({ drawOn: s || null }) },
+
+  /** Ask the sharer to let you draw (you start drawing as soon as they say yes). */
+  request(s) {
+    const me = callBus.me()
+    if (!s || !me) return
+    set({ asked: { ...get().asked, [s]: Date.now() } })
+    callBus.send('ink', { op: 'req', s, by: me, name: useSocial.getState().me?.player_name || '' })
+  },
 
   _list(s) { return get().strokes[s] || [] },
   _put(s, list) {
@@ -180,7 +191,7 @@ export const useInk = create((set, get) => ({
 
   // ------------------------------------------------------------------ from the others
   _recv(p) {
-    if (!p?.s || useCall.getState().mirror) return
+    if (!p?.s) return
     const s = p.s
     const list = get()._list(s)
     if (p.op === 'pt' || p.op === 'end') {
@@ -203,6 +214,20 @@ export const useInk = create((set, get) => ({
       return
     }
     if (p.op === 'clear') { if (inkOwner(s) === p.by) get()._put(s, []); return }
+    if (p.op === 'req') {
+      // asking to draw on a screen you share: the launcher window keeps the list (overlays mirror it)
+      const c = useCall.getState()
+      const id = screenOf(s)
+      if (c.mirror || inkOwner(s) !== callBus.me() || !p.by || !c.myScreens.some(x => x.id === id) || canInk(s, p.by)) return
+      const name = p.name || c.members[p.by]?.name || 'Jemand'
+      useCall.setState({ inkAsks: [...c.inkAsks.filter(a => !(a.id === id && a.by === p.by)), { id, by: p.by, name, at: Date.now() }] })
+      c.onNotice?.(`${name} möchte auf deinem Bildschirm malen.`)
+      return
+    }
+    if (p.op === 'no') {
+      if (p.to === callBus.me() && inkOwner(s) === p.by) set({ asked: { ...get().asked, [s]: 'no' } })
+      return
+    }
     if (p.op === 'ask') {
       if (inkOwner(s) === callBus.me()) callBus.send('ink', { op: 'all', s, by: callBus.me(), list: list.filter(st => st.done).map(wire) })
       return
@@ -282,13 +307,12 @@ function closeNative(s) { useCall.getState().inkClose?.(s || null) }
 // Screens come and go with the call: ask for what's drawn on new ones, forget gone ones.
 let known = new Set()
 useCall.subscribe(c => {
-  if (c.mirror) return
   const ink = useInk.getState()
   if (!c.call) {
     if (known.size || Object.keys(ink.strokes).length || ink.drawOn) {
       known = new Set()
       pending = null
-      useInk.setState({ strokes: {}, drawOn: null })
+      useInk.setState({ strokes: {}, drawOn: null, asked: {} })
       closeNative()
     }
     return
@@ -313,4 +337,14 @@ useCall.subscribe(c => {
   // not allowed any more (or the screen is gone): stop drawing
   const d = useInk.getState().drawOn
   if (d && (!keys.has(d) || !canInk(d, me, c))) useInk.getState().setDraw(null)
+  // you asked and the sharer said yes: go
+  const asked = useInk.getState().asked
+  for (const [k, at] of Object.entries(asked)) {
+    if (typeof at !== 'number' || !canInk(k, me, c)) continue
+    const rest = { ...asked }
+    delete rest[k]
+    useInk.setState({ asked: rest })
+    if (Date.now() - at < 120000 && !useInk.getState().drawOn) useInk.getState().setDraw(k)
+    break
+  }
 })

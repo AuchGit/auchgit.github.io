@@ -63,6 +63,13 @@ let channel = null
 let ctx = null
 let viewHook = null // launcher: where the call shows (components/call/host.js)
 let nativeN = 0
+// This app window (or browser tab). The same person on another device is another `inst`:
+// the call moves to where you join last (the other one leaves), signals name the device.
+const INST = Math.random().toString(36).slice(2, 10)
+// Overlays mirror the call, but drawing on pictures talks to the call channel itself.
+let side = null
+let sideConv = null
+const early = new Map() // userId -> signals from a device not (yet) in the presence
 
 /**
  * Other things on the call channel hook in here (drawing on shared screens, store/useInk.js):
@@ -70,8 +77,18 @@ let nativeN = 0
  */
 export const callBus = {
   on: {},
-  send(event, payload) { channel?.send({ type: 'broadcast', event, payload }) },
+  send(event, payload) { (channel || side)?.send({ type: 'broadcast', event, payload }) },
   me: () => me(),
+}
+
+/** Overlays: their own line to the call channel, only for drawing. */
+function sideChannel(convId) {
+  if (sideConv === convId) return
+  if (side) { try { supabase?.removeChannel(side) } catch { /* gone */ } side = null }
+  sideConv = convId
+  if (!convId || !supabase) return
+  side = supabase.channel(`call-${convId}`, { config: { broadcast: { self: false } } })
+  side.on('broadcast', { event: 'ink' }, ({ payload }) => { callBus.on.ink?.(payload) }).subscribe()
 }
 
 /** The launcher window says where the call can show (overlays ask for it with setView). */
@@ -182,6 +199,9 @@ export const useCall = create((set, get) => ({
   pipBody: null,     // website: the picture-in-picture window's body
   layout: load('settings', {}).callLayout || 'grid', // 'grid' | 'focus' | 'side'
   pinned: null,      // the picture you clicked to keep big
+  solo: false,       // only the pinned picture (big view and full screen)
+  strip: load('settings', {}).callStrip || 24, // % of the room the small pictures get beside / below the big one
+  inkAsks: [],       // [{ id, by, name, at }] people asking to draw on a screen you share
   board: [],         // [{ id, name }] your soundboard
   boardLevel: load('settings', {}).callBoardVolume ?? 80, // how loud your soundboard goes out (and you hear it)
   boardPlaying: null,
@@ -252,8 +272,18 @@ export const useCall = create((set, get) => ({
         if (get().call?.kind === 'direct') { get().onNotice?.(`${payload?.name || 'Die andere Seite'} hat abgelehnt.`); get().leave() }
       })
       .on('broadcast', { event: 'ink' }, ({ payload }) => { callBus.on.ink?.(payload) })
+      // you joined on another device: the call goes on there
+      .on('broadcast', { event: 'move' }, ({ payload }) => {
+        if (payload?.uid !== uid || payload.inst === INST || get().call?.convId !== convId) return
+        get().onNotice?.('Der Anruf läuft jetzt auf deinem anderen Gerät weiter.')
+        get().leave()
+      })
       .on('presence', { event: 'sync' }, () => get()._sync())
-      .subscribe(status => { if (status === 'SUBSCRIBED') get()._announce() })
+      .subscribe(status => {
+        if (status !== 'SUBSCRIBED') return
+        get()._announce()
+        channel?.send({ type: 'broadcast', event: 'move', payload: { uid, inst: INST } })
+      })
     meterTimer = setInterval(() => get()._meter(), 120)
     if (video) get().toggleCamera().catch(() => {})
   },
@@ -262,6 +292,7 @@ export const useCall = create((set, get) => ({
     clearInterval(meterTimer)
     clearTimeout(ringOutTimer)
     for (const id of [...peers.keys()]) get()._drop(id)
+    early.clear()
     if (get().sharing) get().shareProgram(null).catch(() => {})
     get().stopBoard()
     // (program sound is shared with going live: shareProgram(null) above gives it back)
@@ -272,7 +303,7 @@ export const useCall = create((set, get) => ({
     try { local.micSource?.disconnect() } catch { /* gone */ }
     Object.assign(local, { micRaw: null, micSource: null, progStream: null, progNode: null, camStream: null })
     if (channel) { supabase.removeChannel(channel); channel = null }
-    set({ call: null, members: {}, speaking: {}, videos: {}, screens: {}, myScreens: [], guests: [], sharing: null, camera: false, joining: false, outgoing: null, pinned: null })
+    set({ call: null, members: {}, speaking: {}, videos: {}, screens: {}, myScreens: [], guests: [], sharing: null, camera: false, joining: false, outgoing: null, pinned: null, solo: false, inkAsks: [] })
     useSocial.getState().setCall(null)
   },
 
@@ -280,7 +311,7 @@ export const useCall = create((set, get) => ({
   _announce() {
     const s = useSocial.getState()
     const { muted, deaf, camera, sharing } = get()
-    channel?.track({ name: s.me?.player_name || '', avatar: s.me?.avatar_url || null, muted: muted || !local.micRaw, deaf, video: camera, stream: sharing?.name || null, screens: get().myScreens.map(({ id, name, sound, ink }) => ({ id, name, sound, ink: ink || 'none' })), guests: get().guests })
+    channel?.track({ inst: INST, name: s.me?.player_name || '', avatar: s.me?.avatar_url || null, muted: muted || !local.micRaw, deaf, video: camera, stream: sharing?.name || null, screens: get().myScreens.map(({ id, name, sound, ink }) => ({ id, name, sound, ink: ink || 'none' })), guests: get().guests })
   },
 
   /** Bring friends into the call (they don't have to be in its chat): it rings for them. */
@@ -336,7 +367,10 @@ export const useCall = create((set, get) => ({
       if (id === uid) continue
       if (allowed && !allowed.has(id) && !vouched.has(id)) { stranger = true; continue }
       const m = metas[metas.length - 1] || {}
-      members[id] = { name: m.name, avatar: m.avatar, muted: !!m.muted, deaf: !!m.deaf, video: !!m.video, stream: m.stream || null, screens: Array.isArray(m.screens) ? m.screens : [], state: peers.get(id)?.pc.connectionState || 'new' }
+      members[id] = { inst: m.inst || null, name: m.name, avatar: m.avatar, muted: !!m.muted, deaf: !!m.deaf, video: !!m.video, stream: m.stream || null, screens: Array.isArray(m.screens) ? m.screens : [], state: peers.get(id)?.pc.connectionState || 'new' }
+      // the same person, now on another device: a new connection there
+      const p = peers.get(id)
+      if (p && p.inst && m.inst && p.inst !== m.inst) get()._drop(id)
     }
     if (stranger && Date.now() - allowedAt > 10000 && get().call) get()._loadAllowed(get().call.convId)
     const before = Object.keys(get().members)
@@ -344,12 +378,19 @@ export const useCall = create((set, get) => ({
     if (Object.keys(members).length) clearTimeout(ringOutTimer)
     for (const id of Object.keys(members)) if (!peers.has(id) && Object.keys(members).length < CALL_MAX) get()._connect(id)
     for (const id of [...peers.keys()]) if (!members[id]) get()._drop(id)
+    // signals from a device that only now shows up in the presence
+    for (const [id, list] of early) {
+      const cur = members[id]?.inst
+      const now = cur ? list.filter(x => x.fi === cur) : []
+      if (!cur || now.length) early.delete(id)
+      if (now.length) now.reduce((p, x) => p.then(() => get()._signal(x)), Promise.resolve()).catch(() => {})
+    }
     const now = Object.keys(members)
     if (before.length && now.length !== before.length) useCall.getState().onPeople?.(now.length > before.length ? 'join' : 'leave')
   },
 
   _send(payload) {
-    channel?.send({ type: 'broadcast', event: 'sig', payload: { ...payload, from: me() } })
+    channel?.send({ type: 'broadcast', event: 'sig', payload: { ...payload, from: me(), fi: INST, ti: payload.to ? peers.get(payload.to)?.inst || undefined : undefined } })
   },
 
   _kinds() {
@@ -364,7 +405,7 @@ export const useCall = create((set, get) => ({
 
   _connect(id) {
     const pc = new RTCPeerConnection({ iceServers: ICE })
-    const p = { pc, polite: me() > id, makingOffer: false, ignoreOffer: false, kinds: {}, senders: {}, audio: {}, video: null }
+    const p = { pc, inst: get().members[id]?.inst || null, polite: me() > id, makingOffer: false, ignoreOffer: false, kinds: {}, senders: {}, audio: {}, video: null }
     peers.set(id, p)
     const add = (stream, kind) => stream?.getTracks().forEach(t => { p.senders[kind] = [...(p.senders[kind] || []), pc.addTrack(t, stream)] })
     if (local.micRaw) add(local.micSend, 'voice')
@@ -393,11 +434,22 @@ export const useCall = create((set, get) => ({
     return p
   },
 
-  async _signal({ from, to, description, candidate, kinds }) {
+  async _signal({ from, to, description, candidate, kinds, fi, ti }) {
     if (to !== me() || !from) return
+    if (ti && ti !== INST) return // for your other device
     if (allowed && !allowed.has(from) && !get().members[from]) return // not from this chat (or brought in by someone who is)
+    const cur = get().members[from]?.inst
+    if (fi && cur && fi !== cur) {
+      // another device of that person: the old one (leaving) or a new one whose presence comes
+      // a moment later. Kept until the presence says which one is in the call.
+      early.set(from, [...(early.get(from) || []), arguments[0]].slice(-60))
+      return
+    }
+    const old = peers.get(from)
+    if (old && old.inst && fi && old.inst !== fi) get()._drop(from)
     const p = peers.get(from) || (get().members[from] || description ? get()._connect(from) : null)
     if (!p) return
+    if (!p.inst && fi) p.inst = fi
     if (kinds) p.kinds = { ...p.kinds, ...kinds }
     const pc = p.pc
     if (description) {
@@ -650,6 +702,19 @@ export const useCall = create((set, get) => ({
     get()._announce()
   },
 
+  /** Someone asks to draw on a screen you share: 'one' (that person), 'all', or 'no'. */
+  inkAnswer(id, who, how) {
+    const asks = get().inkAsks.filter(a => !(a.id === id && a.by === who))
+    set({ inkAsks: asks })
+    const x = get().myScreens.find(v => v.id === id)
+    if (!x) return
+    if (how === 'all') get().setInk(id, 'all')
+    else if (how === 'one') {
+      const ink = x.ink || 'none'
+      if (ink !== 'all') get().setInk(id, [...new Set([...(Array.isArray(ink) ? ink : []), who])])
+    } else callBus.send('ink', { op: 'no', s: `${me()}:${id}`, by: me(), to: who })
+  },
+
   /** Wipes every drawing off a screen you share (store/useInk.js listens). */
   inkClear(id) { callBus.on.inkClear?.(id) },
 
@@ -660,6 +725,13 @@ export const useCall = create((set, get) => ({
   setLayout(layout) {
     setSetting('callLayout', layout)
     set({ layout })
+  },
+
+  /** Room for the small pictures beside / below the big one, in %. */
+  setStrip(pct) {
+    const v = Math.max(10, Math.min(50, Math.round(pct)))
+    set({ strip: v })
+    setSetting('callStrip', v)
   },
 
   /** Keep a picture big (again: let go). */

@@ -166,7 +166,13 @@ export default function ChatApp({ app = false }) {
           <div className={`fixed right-4 z-50 ${app ? 'top-[calc(env(safe-area-inset-top)+0.75rem)] left-4 sm:left-auto' : 'top-20'}`}><CallRing /></div>
           <div className={`fixed left-1/2 z-50 -translate-x-1/2 ${app ? 'top-[calc(env(safe-area-inset-top)+0.5rem)]' : 'top-[4.5rem]'}`}><LiveBadge /></div>
           {note && <div className="fixed bottom-4 right-4 z-50 rounded-xl border border-white/[0.08] bg-ink-900/95 px-4 py-2.5 text-[13px] shadow-lift animate-pop">{note}</div>}
-          {big && <div className={`fixed inset-x-0 bottom-0 z-40 bg-ink-950/95 backdrop-blur ${app ? 'top-0 pt-[env(safe-area-inset-top)]' : 'top-16'}`}><CallPage /></div>}
+          {/* the call big, its chat beside it (wide screens) */}
+          {big && (
+            <div className={`fixed inset-x-0 bottom-0 z-40 flex bg-ink-950/95 backdrop-blur ${app ? 'top-0 pt-[env(safe-area-inset-top)]' : 'top-16'}`}>
+              <div className="min-w-0 flex-1"><CallPage /></div>
+              {chat && <div className="hidden w-[380px] shrink-0 border-l border-white/[0.06] bg-ink-900/80 lg:block"><ChatPanel /></div>}
+            </div>
+          )}
           <CallModes />
         </>,
         document.body,

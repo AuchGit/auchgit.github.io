@@ -85,6 +85,8 @@ export async function setCallView(next) {
   if (cur === 'dock' || cur === 'big' || cur === 'chat') before = cur
   useCall.setState({ view: next, ...(next === 'pip' ? {} : { pipBody: null }) })
   if (next === 'chat') await openCallChat(useCall.getState().call?.convId)
+  // big: its chat comes up beside it
+  if (next === 'big' && useSocial.getState().chat?.convId !== useCall.getState().call?.convId) await openCallChat(useCall.getState().call?.convId)
 }
 
 /** Out of full screen / picture in picture, back to where you were. */

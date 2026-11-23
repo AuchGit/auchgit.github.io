@@ -8,7 +8,7 @@
 //   Stage         all pictures: grid, focus with the rest below, or beside
 import { useEffect, useRef, useState } from 'react'
 import {
-  AppWindow, AudioLines, Check, ChevronDown, Columns2, Eraser, Expand, Eye, EyeOff, GripHorizontal, HeadphoneOff, Headphones, LayoutGrid, LayoutTemplate,
+  AppWindow, AudioLines, Check, ChevronDown, Columns2, Eraser, Expand, Eye, EyeOff, Focus, GripHorizontal, HeadphoneOff, Headphones, LayoutGrid, LayoutTemplate,
   Layers, Loader2, Maximize2, MessageSquare, Mic, MicOff, Minus, MonitorUp, Music2, PanelBottom, Pencil, Phone, PhoneOff, PictureInPicture2, Pin, Plus, RefreshCw, Rows2, Shrink,
   SlidersHorizontal, Square, Upload, UserPlus, Users, Video, VideoOff, Volume2, X,
 } from 'lucide-react'
@@ -367,7 +367,6 @@ export function FullButton() {
   const act = () => {
     if (mirror) return useCall.getState().onFull?.()
     if (full) return viewBack()
-    useCall.setState({ fullSolo: false })
     setCallView('full')
   }
   return (
@@ -486,6 +485,7 @@ export function CallControls({ compact = false, onMinimize }) {
         {!ids.length && <li className="px-2 py-2 text-[12px] text-ink-500">{joining ? 'Verbindet …' : outgoing ? (call.kind === 'direct' ? `Klingelt bei ${call.title} …` : 'Klingelt bei den anderen …') : 'Noch keiner da. Die anderen sehen den Anruf im Chat.'}</li>}
       </ul>
       {error && <div className="mx-3 mb-1 rounded-lg bg-rose-500/10 px-2.5 py-1.5 text-[11.5px] text-rose-200">{error}</div>}
+      <InkAsks className="mx-2 mb-1" />
       <ControlBar compact={compact} />
     </div>
   )
@@ -507,6 +507,7 @@ export function LiveBadge({ className = '' }) {
     sharing && { key: 'program', label: `Ton: ${sharing.name}`, stop: () => c.shareProgram(null) },
   ].filter(Boolean)
   return (
+    <div className="flex flex-col items-center gap-1.5">
     <div data-hit style={{ pointerEvents: 'auto' }}
       className={`flex max-w-[92vw] items-center gap-2 rounded-full border border-rose-400/40 bg-ink-950/[0.93] py-1 pl-3 pr-1 text-[12px] shadow-lift backdrop-blur animate-pop ${className}`}>
       <span className="relative flex h-2.5 w-2.5 shrink-0">
@@ -524,6 +525,8 @@ export function LiveBadge({ className = '' }) {
       ))}
       <button onClick={() => { c.stopScreen(); if (sharing) c.shareProgram(null) }}
         className="shrink-0 rounded-full bg-rose-500 px-3 py-1 text-[11.5px] font-semibold text-white hover:bg-rose-400">Beenden</button>
+    </div>
+    <InkAsks className="w-[min(92vw,440px)]" />
     </div>
   )
 }
@@ -645,11 +648,46 @@ function focusOf(tiles, pinned) {
     || tiles.find(t => !t.own && t.speaking) || tiles.find(t => !t.own && t.stream) || tiles.find(t => !t.own) || tiles[0]
 }
 
-function CallTile({ t, pinned, small, full }) {
+/** Opens one picture on its own: an overlay window (launcher), else the browser's picture in picture. */
+async function popOut(t, video) {
+  const c = useCall.getState()
+  if (c.onPic?.(t.key, t.label || t.name)) return
+  try {
+    if (document.pictureInPictureElement === video) await document.exitPictureInPicture()
+    else await video?.requestPictureInPicture?.()
+  } catch { useCall.setState({ error: 'Ein eigenes Fenster für das Bild geht hier nicht.' }) }
+}
+
+/** Ask the sharer / draw / asked: the button on someone's shared screen. */
+function InkButton({ t, may, drawing, start }) {
+  const asked = useInk(s => s.asked[t.ink])
+  if (!t.ink || !t.stream || drawing) return null
+  const wait = typeof asked === 'number' && Date.now() - asked < 60000
+  const base = 'absolute bottom-1.5 right-1.5 flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-white transition'
+  if (may) {
+    return (
+      <button onClick={e => { e.stopPropagation(); start() }} onDoubleClick={e => e.stopPropagation()} title={t.own ? 'Selbst darauf malen' : 'Auf dieses Bild malen: erscheint auch bei der Person, die teilt'}
+        className={`${base} ${t.own ? 'bg-black/60 opacity-0 hover:bg-black/80 group-hover:opacity-100' : 'bg-brand-500/90 hover:bg-brand-400'}`}>
+        <Pencil size={11} /> Malen
+      </button>
+    )
+  }
+  if (t.own) return null
+  return (
+    <button disabled={wait} onClick={e => { e.stopPropagation(); useInk.getState().request(t.ink) }} onDoubleClick={e => e.stopPropagation()}
+      title="Fragt die Person, die teilt, ob du darauf malen darfst"
+      className={`${base} bg-black/60 hover:bg-black/80 disabled:cursor-default disabled:opacity-80`}>
+      <Pencil size={11} /> {wait ? 'Gefragt …' : asked === 'no' ? 'Nicht erlaubt (nochmal fragen)' : 'Malen anfragen'}
+    </button>
+  )
+}
+
+function CallTile({ t, pinned, small, full, lone = false }) {
   const ref = useRef(null)
   useEffect(() => { if (ref.current) ref.current.srcObject = t.stream || null }, [t.stream])
   const mirror = useCall(s => s.mirror)
-  const may = useCall(c => !c.mirror && !!t.ink && !!t.stream && canInk(t.ink, callBus.me(), c))
+  const solo = useCall(s => s.solo)
+  const may = useCall(c => !!t.ink && !!t.stream && canInk(t.ink, callBus.me(), c))
   const drawing = useInk(s => !!t.ink && s.drawOn === t.ink)
   const inkLow = useInk(s => !!s.tool.low)
   const [narrow, setNarrow] = useState(false)
@@ -660,52 +698,87 @@ function CallTile({ t, pinned, small, full }) {
     ro.observe(box.current)
     return () => ro.disconnect()
   }, [drawing])
+  // drawing wants room: this picture big (also when the sharer just said yes)
+  useEffect(() => {
+    if (!drawing || lone) return
+    useCall.setState({ pinned: t.key })
+    if (small && !full && !mirror) setCallView('big')
+  }, [drawing]) // eslint-disable-line react-hooks/exhaustive-deps
   const allowed = useCall(c => (t.own && t.inkId ? c.myScreens.find(x => x.id === t.inkId)?.ink || 'none' : null))
   const tool = 'grid h-7 w-7 place-items-center rounded-lg bg-black/60 hover:bg-black/80'
   const c = useCall.getState()
   const goFull = () => {
     if (mirror) { c.onFull?.(); return }
     if (full) { viewBack(); return }
-    useCall.setState({ pinned: t.key, fullSolo: true })
+    useCall.setState({ pinned: t.key, solo: true })
     setCallView('full')
   }
-  const draw = () => {
-    useInk.getState().setDraw(t.ink)
-    useCall.setState({ pinned: t.key })
-    if (small && !full) setCallView('big') // drawing wants room
-  }
+  const alone = solo && pinned
   return (
-    <div ref={box} onClick={() => { if (!drawing) c.pin(t.key) }} onDoubleClick={() => { if (!drawing && t.stream) goFull() }}
-      title={drawing ? undefined : `${pinned ? 'Lösen' : 'Groß anheften'}${t.stream ? ', Doppelklick: Vollbild' : ''}`}
-      className={`group relative h-full w-full cursor-pointer overflow-hidden rounded-xl ring-2 transition ${t.screen || t.stream ? 'bg-black' : 'bg-ink-850'} ${drawing ? 'ring-brand-400' : t.speaking ? 'ring-emerald-400' : pinned ? 'ring-brand-400/70' : 'ring-transparent'}`}>
+    <div ref={box} onClick={() => { if (!drawing && !lone) c.pin(t.key) }} onDoubleClick={() => { if (!drawing && t.stream && !lone) goFull() }}
+      title={drawing || lone ? undefined : `${pinned ? 'Lösen' : 'Groß anheften'}${t.stream ? ', Doppelklick: Vollbild' : ''}`}
+      className={`group relative h-full w-full overflow-hidden rounded-xl ring-2 transition ${lone ? '' : 'cursor-pointer'} ${t.screen || t.stream ? 'bg-black' : 'bg-ink-850'} ${drawing ? 'ring-brand-400' : t.speaking ? 'ring-emerald-400' : pinned && !lone ? 'ring-brand-400/70' : 'ring-transparent'}`}>
       {t.stream
         ? <video ref={ref} autoPlay playsInline muted className={`h-full w-full ${t.screen ? 'object-contain' : 'object-cover'} ${t.mirror ? '-scale-x-100' : ''}`} />
         : <div className="grid h-full place-items-center"><PersonAvatar id={t.id} name={t.name} url={t.avatar} size={small ? 36 : 72} /></div>}
-      {t.ink && t.stream && !mirror && <InkLayer s={t.ink} video={ref} drawing={drawing} />}
-      <span className={`pointer-events-none absolute bottom-1.5 left-1.5 flex max-w-[calc(100%-80px)] items-center gap-1 rounded-md bg-black/60 px-1.5 py-0.5 font-medium ${small ? 'text-[10.5px]' : 'text-[12px]'}`}>
-        {t.screen && <MonitorUp size={11} className="shrink-0" />}{pinned && <Pin size={10} className="shrink-0 text-brand-300" />}
+      {t.ink && t.stream && <InkLayer s={t.ink} video={ref} drawing={drawing} />}
+      <span className={`pointer-events-none absolute bottom-1.5 left-1.5 flex max-w-[calc(100%-120px)] items-center gap-1 rounded-md bg-black/60 px-1.5 py-0.5 font-medium ${small ? 'text-[10.5px]' : 'text-[12px]'}`}>
+        {t.screen && <MonitorUp size={11} className="shrink-0" />}{pinned && !lone && <Pin size={10} className="shrink-0 text-brand-300" />}
         <span className="truncate">{t.label || t.name}</span>
         {t.muted && <MicOff size={10} className="shrink-0 text-rose-300" />}
       </span>
       {drawing && <div className={`absolute inset-x-1.5 z-10 flex justify-center ${inkLow ? 'bottom-1.5' : 'top-1.5'}`}><InkBar s={t.ink} compact={small || narrow} /></div>}
       {!drawing && (
         <div className="absolute right-1.5 top-1.5 flex gap-1 opacity-0 transition group-hover:opacity-100">
-          {t.own && t.inkId && !mirror && (
+          {t.own && t.inkId && (
             <button onClick={e => { e.stopPropagation(); c.setInk(t.inkId, allowed === 'none' ? 'all' : 'none') }}
               title={allowed === 'none' ? 'Alle im Anruf darauf malen lassen (wer genau: unter Teilen)' : 'Niemand mehr darauf malen lassen'}
               className={`${tool} ${allowed !== 'none' ? 'text-brand-300' : 'text-white'}`}><Users size={14} /></button>
           )}
           {t.stop && <button onClick={e => { e.stopPropagation(); t.stop() }} title="Nicht mehr teilen" className={`${tool} text-rose-200`}><X size={14} /></button>}
           {t.hide && <button onClick={e => { e.stopPropagation(); t.hide() }} title="Eigenes Bild ausblenden (die anderen sehen dich weiter)" className={`${tool} text-white`}><EyeOff size={14} /></button>}
-          {t.stream && (!mirror || c.onFull) && <button onClick={e => { e.stopPropagation(); goFull() }} title={mirror ? 'Fenster groß / klein' : full ? 'Vollbild verlassen' : 'Vollbild'} className={`${tool} text-white`}>{full ? <Shrink size={14} /> : <Expand size={14} />}</button>}
+          {!lone && !small && (
+            <button onClick={e => { e.stopPropagation(); useCall.setState({ pinned: t.key, solo: !alone }) }} title={alone ? 'Wieder alle Bilder' : 'Nur dieses Bild zeigen'}
+              className={`${tool} ${alone ? 'text-brand-300' : 'text-white'}`}><Focus size={14} /></button>
+          )}
+          {t.stream && !lone && (
+            <button onClick={e => { e.stopPropagation(); popOut(t, ref.current) }} title={mirror ? 'In eigenes Overlay-Fenster' : 'In eigenes Fenster (verschieben, Größe ziehen)'}
+              className={`${tool} text-white`}><PictureInPicture2 size={14} /></button>
+          )}
+          {t.stream && !lone && (!mirror || c.onFull) && <button onClick={e => { e.stopPropagation(); goFull() }} title={mirror ? 'Fenster groß / klein' : full ? 'Vollbild verlassen' : 'Vollbild'} className={`${tool} text-white`}>{full ? <Shrink size={14} /> : <Expand size={14} />}</button>}
         </div>
       )}
-      {may && !drawing && (
-        <button onClick={e => { e.stopPropagation(); draw() }} onDoubleClick={e => e.stopPropagation()} title={t.own ? 'Selbst darauf malen' : 'Auf dieses Bild malen: erscheint auch bei der Person, die teilt'}
-          className={`absolute bottom-1.5 right-1.5 flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-white transition ${t.own ? 'bg-black/60 opacity-0 hover:bg-black/80 group-hover:opacity-100' : 'bg-brand-500/90 hover:bg-brand-400'}`}>
-          <Pencil size={11} /> Malen
-        </button>
-      )}
+      <InkButton t={t} may={may} drawing={drawing} start={() => useInk.getState().setDraw(t.ink)} />
+    </div>
+  )
+}
+
+/** One picture of the call on its own (an overlay window): `k` is its tile key. */
+export function OnePicture({ k }) {
+  const tiles = useTiles()
+  const t = tiles.find(x => x.key === k)
+  if (!t) return <div className="grid h-full place-items-center px-4 text-center text-[12px] text-ink-500">Das Bild ist gerade nicht da (geteilt wird nicht mehr, oder der Anruf ist vorbei).</div>
+  return <CallTile t={t} pinned={false} lone />
+}
+
+/** "May I draw?" from the others, on a screen you share. */
+export function InkAsks({ className = '' }) {
+  const asks = useCall(s => s.inkAsks) || []
+  const screens = useCall(s => s.myScreens) || []
+  const fresh = asks.filter(a => Date.now() - a.at < 120000)
+  if (!fresh.length) return null
+  const c = useCall.getState()
+  return (
+    <div data-hit style={{ pointerEvents: 'auto' }} className={`space-y-1 ${className}`}>
+      {fresh.map(a => (
+        <div key={a.id + a.by} className="flex flex-wrap items-center gap-1.5 rounded-xl border border-brand-400/30 bg-ink-900/[0.96] px-2.5 py-1.5 text-[12px] shadow-lift animate-pop">
+          <Pencil size={12} className="shrink-0 text-brand-300" />
+          <span className="min-w-0 flex-1"><b>{a.name}</b> möchte auf {screens.length > 1 ? `„${screens.find(x => x.id === a.id)?.name || 'Bildschirm'}“` : 'deinem Bildschirm'} malen</span>
+          <button onClick={() => c.inkAnswer(a.id, a.by, 'one')} className="rounded-md bg-brand-500 px-2 py-0.5 font-semibold text-white hover:bg-brand-400">Erlauben</button>
+          <button onClick={() => c.inkAnswer(a.id, a.by, 'all')} className="rounded-md bg-white/[0.08] px-2 py-0.5 text-ink-100 hover:bg-white/[0.14]">Alle</button>
+          <button onClick={() => c.inkAnswer(a.id, a.by, 'no')} className="rounded-md px-2 py-0.5 text-ink-400 hover:bg-white/[0.08] hover:text-white">Nein</button>
+        </div>
+      ))}
     </div>
   )
 }
@@ -714,6 +787,7 @@ function CallTile({ t, pinned, small, full }) {
 export function Stage({ layout = 'grid', small = false, solo = false, full = false }) {
   const tiles = useTiles()
   const pinned = useCall(s => s.pinned)
+  const strip = useCall(s => s.strip || 24)
   if (!tiles.length) return null
   if (solo) { const main = focusOf(tiles, pinned); return <CallTile t={main} pinned={pinned === main.key} small={small} full={full} /> }
   if (layout === 'grid' || tiles.length === 1) {
@@ -728,10 +802,23 @@ export function Stage({ layout = 'grid', small = false, solo = false, full = fal
   const main = focusOf(tiles, pinned)
   const rest = tiles.filter(t => t !== main)
   const side = layout === 'side'
+  const drag = e => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    const box = e.currentTarget.parentElement.getBoundingClientRect()
+    const move = ev => useCall.getState().setStrip(side ? ((box.right - ev.clientX) / box.width) * 100 : ((box.bottom - ev.clientY) / box.height) * 100)
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up) }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
   return (
-    <div className={`flex h-full w-full gap-2 ${side ? 'flex-row' : 'flex-col'}`}>
+    <div className={`flex h-full w-full ${side ? 'flex-row' : 'flex-col'}`}>
       <div className="min-h-0 min-w-0 flex-1"><CallTile t={main} pinned={pinned === main.key} small={small} full={full} /></div>
-      <div className={`flex shrink-0 gap-2 overflow-auto ${side ? 'w-[24%] min-w-[110px] flex-col' : 'h-[24%] min-h-[64px]'}`}>
+      <div onPointerDown={drag} title="Ziehen: kleine Bilder größer oder kleiner"
+        className={`group/strip flex shrink-0 items-center justify-center ${side ? 'w-2.5 cursor-ew-resize flex-col' : 'h-2.5 cursor-ns-resize'}`}>
+        <span className={`rounded-full bg-white/10 group-hover/strip:bg-white/30 ${side ? 'h-10 w-1' : 'h-1 w-10'}`} />
+      </div>
+      <div style={side ? { width: `${strip}%` } : { height: `${strip}%` }} className={`flex shrink-0 gap-2 overflow-auto ${side ? 'min-w-[110px] flex-col' : 'min-h-[64px]'}`}>
         {rest.map(t => (
           <div key={t.key} className={`shrink-0 ${side ? 'aspect-video w-full' : 'aspect-video h-full'}`}><CallTile t={t} pinned={pinned === t.key} small full={full} /></div>
         ))}
@@ -841,6 +928,7 @@ export function CallInChat({ convId }) {
       {pictures && <div onPointerDown={drag} title="Höhe ziehen" className="flex h-3 cursor-ns-resize items-center justify-center"><span className="h-1 w-12 rounded-full bg-white/10" /></div>}
       {error && <div className="mx-3 mt-1 rounded-lg bg-rose-500/10 px-2.5 py-1.5 text-[11.5px] text-rose-200">{error}</div>}
       <ActivityLink className="mx-3 mt-1.5 w-auto" />
+      <InkAsks className="mx-2 mt-1" />
       <ControlBar compact />
     </div>
   )
@@ -850,6 +938,7 @@ export function CallInChat({ convId }) {
 export function CallPage() {
   const call = useCall(s => s.call)
   const layout = useCall(s => s.layout)
+  const solo = useCall(s => s.solo && !!s.pinned)
   const act = useActivity(s => !!s.act)
   const pictures = usePictures()
   if (!call) {
@@ -872,7 +961,12 @@ export function CallPage() {
           <div className="card min-h-0 flex-1 overflow-hidden"><Activity /></div>
           {pictures && <div className="h-36 shrink-0"><Stage layout="side" small /></div>}
         </div>
-      ) : <div className="min-h-0 min-w-0 flex-1"><Stage layout={layout} /></div>}
+      ) : (
+        <div className="relative min-h-0 min-w-0 flex-1">
+          <Stage layout={layout} solo={solo} />
+          {solo && <button onClick={() => useCall.setState({ solo: false })} className="absolute left-1/2 top-2 z-20 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-black/60 px-3 py-1 text-[12px] text-white backdrop-blur hover:bg-black/80"><LayoutGrid size={13} /> Alle Bilder</button>}
+        </div>
+      )}
     </div>
   )
 }
@@ -881,13 +975,13 @@ export function CallPage() {
 function CallFull() {
   const layout = useCall(s => s.layout)
   const call = useCall(s => s.call)
-  const solo = useCall(s => !!s.fullSolo)
+  const solo = useCall(s => s.solo && !!s.pinned)
   const act = useActivity(s => !!s.act)
   useTick(!!call)
   useEffect(() => {
     const key = e => { if (e.key === 'Escape') viewBack() }
     window.addEventListener('keydown', key)
-    return () => { window.removeEventListener('keydown', key); useCall.setState({ fullSolo: false }) }
+    return () => window.removeEventListener('keydown', key)
   }, [])
   if (!call) return null
   return (
@@ -896,11 +990,11 @@ function CallFull() {
         <Phone size={12} className="text-emerald-400" /> {call.title} <span className="tabular-nums text-ink-400">{since(call.since)}</span>
       </div>
       <div className="absolute right-4 top-3 z-10 flex gap-2">
-        {solo && <button onClick={() => useCall.setState({ fullSolo: false })} title="Alle Bilder zeigen" className="grid h-9 w-9 place-items-center rounded-full bg-black/50 text-white backdrop-blur hover:bg-black/70"><LayoutGrid size={16} /></button>}
+        {solo && <button onClick={() => useCall.setState({ solo: false })} title="Alle Bilder zeigen" className="grid h-9 w-9 place-items-center rounded-full bg-black/50 text-white backdrop-blur hover:bg-black/70"><LayoutGrid size={16} /></button>}
         <button onClick={() => viewBack()} title="Vollbild verlassen (Esc)" className="grid h-9 w-9 place-items-center rounded-full bg-black/50 text-white backdrop-blur hover:bg-black/70"><Shrink size={16} /></button>
       </div>
       <div className="min-h-0 flex-1 pb-16 pt-10">{act ? <div className="h-full overflow-hidden rounded-xl bg-ink-900"><Activity /></div> : <Stage layout={layout} solo={solo} full />}</div>
-      <div className="absolute inset-x-0 bottom-4 flex justify-center"><ControlBar floating /></div>
+      <div className="absolute inset-x-0 bottom-4 flex flex-col items-center gap-2"><InkAsks className="w-[min(92vw,460px)]" /><ControlBar floating /></div>
     </div>
   )
 }
