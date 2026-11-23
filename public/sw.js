@@ -20,6 +20,7 @@ self.addEventListener('push', e => {
       badge: '/icons/badge-96.png',
       vibrate: d.call ? [400, 200, 400, 200, 400] : [120, 60, 120],
       requireInteraction: !!d.call,
+      actions: d.call ? [{ action: 'join', title: 'Rangehen' }, { action: 'no', title: 'Ablehnen' }] : [],
       data: { url: d.url || '/app/', conv: d.conv || null, call: !!d.call, live: d.live || null },
     })
   })())
@@ -33,6 +34,11 @@ self.addEventListener('notificationclick', e => {
     const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
     const path = w => new URL(w.url).pathname
     const open = wins.find(w => path(w).startsWith('/app')) || wins.find(w => path(w).startsWith('/chat'))
+    // "Ablehnen": an open chat stops ringing, nothing opens
+    if (e.action === 'no') {
+      if (open && data.conv) open.postMessage({ type: 'decline-call', conv: data.conv })
+      return
+    }
     if (open) {
       await open.focus()
       if (data.live) open.postMessage({ type: 'open-live', host: data.live })

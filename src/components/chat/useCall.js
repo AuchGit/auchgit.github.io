@@ -98,6 +98,10 @@ const local = { micRaw: null, micSource: null, micGain: null, micAnalyser: null,
 const boardCache = new Map() // sound id -> AudioBuffer
 const boardSources = new Set()
 let ringOutTimer = null
+// Everyone else left: the call ends after a moment alone (time for a reconnect or a device change).
+const ALONE_MS = 15000
+let aloneTimer = null
+let hadPeople = false
 // Who belongs to the chat of the call (from the database). Anyone else on the
 // call channel is ignored: no connection, no picture, no sound. null = not
 // known yet (then nobody is filtered, the chat's members are still loading).
@@ -119,15 +123,72 @@ function audioCtx() {
 }
 
 /** Opus a bit better for music: stereo and more bits (applies to every audio line). */
-function tune(sdp) {
+function tuneAudio(sdp) {
   return sdp.replace(/a=fmtp:(\d+) (.*useinbandfec=1.*)/g, (line, pt, rest) =>
     /stereo=1/.test(rest) ? line : `a=fmtp:${pt} ${rest};stereo=1;sprop-stereo=1;maxaveragebitrate=128000`)
+}
+
+// Shared screens as sharp as going live (store/useLive.js does the same): pictures start at
+// 3 Mbit/s instead of WebRTC's 0.3 (the first seconds were blurry), a high ceiling, smooth
+// over sharp, and the codec that gives the most picture for the bits this PC can afford.
+const START_KBPS = 3000
+function tuneVideo(sdp) {
+  const lines = sdp.split('\r\n')
+  const out = []
+  let video = false
+  const fmtp = new Set()
+  for (const l of lines) { const m = l.match(/^a=fmtp:(\d+) /); if (m) fmtp.add(m[1]) }
+  for (const l of lines) {
+    if (l.startsWith('m=')) video = l.startsWith('m=video')
+    const r = video && l.match(/^a=rtpmap:(\d+) (VP8|VP9|AV1|H264)\//i)
+    const f = video && l.match(/^a=fmtp:(\d+) (.*)$/)
+    if (f && !/x-google-start-bitrate/.test(f[2]) && lines.some(x => new RegExp(`^a=rtpmap:${f[1]} (VP8|VP9|AV1|H264)/`, 'i').test(x))) {
+      out.push(`${l};x-google-start-bitrate=${START_KBPS}`)
+      continue
+    }
+    out.push(l)
+    if (r && !fmtp.has(r[1])) out.push(`a=fmtp:${r[1]} x-google-start-bitrate=${START_KBPS}`)
+  }
+  return out.join('\r\n')
+}
+const tune = sdp => tuneVideo(tuneAudio(sdp))
+const byOrder = (codecs, order) => {
+  const rank = c => { const i = order.findIndex(re => re.test(c.mimeType)); return i < 0 ? order.length : i }
+  return [...codecs].sort((a, b) => rank(a) - rank(b))
+}
+/** AV1 with the cores for it (one encode per person: up to 3), else VP9, VP8 on small PCs. */
+function screenOrder(people) {
+  const cores = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 4
+  if (cores >= 8 && people <= 3) return [/av1/i, /vp9/i, /vp8/i, /h264/i]
+  return cores >= 4 ? [/vp9/i, /vp8/i, /h264/i] : [/vp8/i, /vp9/i, /h264/i]
+}
+/** A shared screen's sender: codec order, bitrate ceiling (fewer people: more each), smooth first. */
+function tuneScreen(pc, sender, people) {
+  try {
+    const tr = pc.getTransceivers().find(x => x.sender === sender)
+    const codecs = RTCRtpSender.getCapabilities?.('video')?.codecs || []
+    if (tr?.setCodecPreferences && codecs.length) tr.setCodecPreferences(byOrder(codecs, screenOrder(people)))
+  } catch { /* the engine picks */ }
+  try {
+    const p = sender.getParameters()
+    p.encodings = p.encodings?.length ? p.encodings : [{}]
+    p.encodings[0].maxBitrate = people <= 2 ? 14_000_000 : people <= 4 ? 9_000_000 : 6_000_000
+    p.encodings[0].maxFramerate = 30
+    p.degradationPreference = 'maintain-framerate'
+    sender.setParameters(p).catch(() => {})
+  } catch { /* old engine */ }
 }
 
 const pct = (v, d = 100) => Math.max(0, Math.min(200, Number.isFinite(+v) ? +v : d)) / 100
 
 function camConstraints(id) {
   return { video: { deviceId: id ? { exact: id } : undefined, width: { ideal: 640 }, height: { ideal: 360 }, frameRate: { ideal: 24 } } }
+}
+
+if (typeof document !== 'undefined') {
+  const wake = () => { if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {}) }
+  document.addEventListener('pointerdown', wake, true)
+  document.addEventListener('keydown', wake, true)
 }
 
 /** Everything heard goes through here (call volume). */
@@ -230,18 +291,24 @@ export const useCall = create((set, get) => ({
     const title = named || (conv?.kind === 'group' ? conv.title : conv?.title || view?.friend?.player_name || view?.title || 'Anruf')
     // nobody in it yet: you are calling, it rings on the other side until someone answers
     const calling = !guest && !(get().active[convId] || []).length
-    set({ joining: true, error: null, ringing: get().ringing?.convId === convId ? null : get().ringing })
+    const kind = guest ? 'group' : conv?.kind || (view?.kind === 'group' ? 'group' : 'direct')
+    // the call is there right away (the browser may first ask about the microphone)
+    set({ call: { convId, title, kind, since: Date.now(), guest }, joining: true, error: null, ringing: get().ringing?.convId === convId ? null : get().ringing, members: {}, speaking: {}, videos: {}, screens: {}, myScreens: [], guests: [], outgoing: calling ? { convId, since: Date.now() } : null })
     audioCtx()
     // microphone (without one you can still listen)
+    const ASK = 'Bitte oben im Browser das Mikrofon erlauben.'
+    const slow = setTimeout(() => { if (get().joining && get().call?.convId === convId) set({ error: ASK }) }, 1500)
     try {
       wireMic(await navigator.mediaDevices.getUserMedia(micConstraints()))
       get()._applyMic()
+      if (get().error === ASK) set({ error: null })
     } catch (e) {
       local.micRaw = null
       set({ error: /denied|NotAllowed/i.test(String(e?.name || e)) ? 'Kein Zugriff aufs Mikrofon. Du hörst trotzdem zu.' : 'Kein Mikrofon gefunden. Du hörst trotzdem zu.' })
     }
-    const kind = guest ? 'group' : conv?.kind || (view?.kind === 'group' ? 'group' : 'direct')
-    set({ call: { convId, title, kind, since: Date.now(), guest }, joining: false, members: {}, speaking: {}, videos: {}, screens: {}, myScreens: [], guests: [], outgoing: calling ? { convId, since: Date.now() } : null })
+    clearTimeout(slow)
+    if (get().call?.convId !== convId) { local.micRaw?.getTracks().forEach(t => t.stop()); local.micRaw = null; return } // hung up while the browser asked
+    set({ joining: false })
     useSocial.getState().setCall(convId, guest)
     // brought in, but nobody's there (any more): the call is over
     if (guest) setTimeout(() => { if (get().call?.convId === convId && !Object.keys(get().members).length) { get().onNotice?.('Der Anruf ist schon vorbei.'); get().leave() } }, 9000)
@@ -251,8 +318,9 @@ export const useCall = create((set, get) => ({
       supabase.functions.invoke('push', { body: { type: 'call', conv: convId } }).catch(() => {})
       ringOutTimer = setTimeout(() => {
         if (!get().outgoing || get().call?.convId !== convId) return
-        if (kind === 'direct') { get().onNotice?.(`${title} geht nicht ran.`); get().leave() }
-        else set({ outgoing: null })
+        // nobody came: the call ends (direct and group)
+        get().onNotice?.(kind === 'direct' ? `${title} geht nicht ran.` : 'Keiner ist rangegangen.')
+        get().leave()
       }, RING_OUT_MS)
     }
     get().refreshDevices()
@@ -291,6 +359,9 @@ export const useCall = create((set, get) => ({
   async leave() {
     clearInterval(meterTimer)
     clearTimeout(ringOutTimer)
+    clearTimeout(aloneTimer)
+    aloneTimer = null
+    hadPeople = false
     for (const id of [...peers.keys()]) get()._drop(id)
     early.clear()
     if (get().sharing) get().shareProgram(null).catch(() => {})
@@ -375,6 +446,13 @@ export const useCall = create((set, get) => ({
     if (stranger && Date.now() - allowedAt > 10000 && get().call) get()._loadAllowed(get().call.convId)
     const before = Object.keys(get().members)
     set({ members, ...(Object.keys(members).length ? { outgoing: null } : {}) })
+    if (Object.keys(members).length) { hadPeople = true; clearTimeout(aloneTimer); aloneTimer = null }
+    else if (hadPeople && get().call && !aloneTimer) {
+      aloneTimer = setTimeout(() => {
+        aloneTimer = null
+        if (get().call && !Object.keys(get().members).length) { get().onNotice?.('Anruf beendet: niemand mehr da.'); get().leave() }
+      }, ALONE_MS)
+    }
     if (Object.keys(members).length) clearTimeout(ringOutTimer)
     for (const id of Object.keys(members)) if (!peers.has(id) && Object.keys(members).length < CALL_MAX) get()._connect(id)
     for (const id of [...peers.keys()]) if (!members[id]) get()._drop(id)
@@ -407,7 +485,11 @@ export const useCall = create((set, get) => ({
     const pc = new RTCPeerConnection({ iceServers: ICE })
     const p = { pc, inst: get().members[id]?.inst || null, polite: me() > id, makingOffer: false, ignoreOffer: false, kinds: {}, senders: {}, audio: {}, video: null }
     peers.set(id, p)
-    const add = (stream, kind) => stream?.getTracks().forEach(t => { p.senders[kind] = [...(p.senders[kind] || []), pc.addTrack(t, stream)] })
+    const add = (stream, kind) => stream?.getTracks().forEach(t => {
+      const sender = pc.addTrack(t, stream)
+      p.senders[kind] = [...(p.senders[kind] || []), sender]
+      if (t.kind === 'video' && kind.startsWith('screen:')) tuneScreen(pc, sender, peers.size)
+    })
     if (local.micRaw) add(local.micSend, 'voice')
     add(local.progStream, 'stream')
     add(local.camStream, 'cam')
@@ -601,7 +683,11 @@ export const useCall = create((set, get) => ({
 
   async _renegotiateAdd(stream, kind) {
     for (const p of peers.values()) {
-      p.senders[kind] = stream.getTracks().map(t => p.pc.addTrack(t, stream))
+      p.senders[kind] = stream.getTracks().map(t => {
+        const sender = p.pc.addTrack(t, stream)
+        if (t.kind === 'video' && kind.startsWith('screen:')) tuneScreen(p.pc, sender, peers.size)
+        return sender
+      })
     }
   },
   _removeKind(kind) {

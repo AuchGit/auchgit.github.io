@@ -88,6 +88,8 @@ export default function ChatApp({ app = false }) {
   // A tapped notification (or ?c=…) opens that chat once the list is there.
   const convs = useSocial(s => s.convs)
   const [pending, setPending] = useState(() => { try { return new URLSearchParams(location.search).get('c') } catch { return null } })
+  // "X ruft an" tapped (notification or link with &call=1): straight into that call
+  const [joinConv, setJoinConv] = useState(() => { try { const q = new URLSearchParams(location.search); return q.get('call') ? q.get('c') : null } catch { return null } })
   // "X ist live" tapped: offer to come in (a tap starts the sound, phones want that)
   useEffect(() => {
     try {
@@ -97,7 +99,8 @@ export default function ChatApp({ app = false }) {
   }, [])
   useEffect(() => {
     const on = e => {
-      if (e.data?.type === 'open-chat' && e.data.conv) setPending(e.data.conv)
+      if (e.data?.type === 'open-chat' && e.data.conv) { setPending(e.data.conv); if (e.data.call) setJoinConv(e.data.conv) }
+      if (e.data?.type === 'decline-call' && e.data.conv && useCall.getState().ringing?.convId === e.data.conv) useCall.getState().decline()
       if (e.data?.type === 'open-live' && e.data.host) useLive.setState({ invite: e.data.host })
     }
     navigator.serviceWorker?.addEventListener('message', on)
@@ -107,6 +110,22 @@ export default function ChatApp({ app = false }) {
     if (!pending || !session) return
     if (openConv(pending)) { setPending(null); history.replaceState(null, '', location.pathname) }
   }, [pending, convs, session])
+
+  useEffect(() => {
+    if (!joinConv || !session) return
+    // only while someone is still in it (else it would ring for the other side again)
+    const go = () => {
+      const c = useCall.getState()
+      if (c.call?.convId === joinConv) return true
+      if (!(c.active[joinConv] || []).length) return false
+      c.join(joinConv)
+      return true
+    }
+    if (go()) { setJoinConv(null); return }
+    const off = useCall.subscribe(() => { if (go()) setJoinConv(null) })
+    const t = setTimeout(() => { setJoinConv(null); setNote('Der Anruf ist schon vorbei.') }, 12000)
+    return () => { off(); clearTimeout(t) }
+  }, [joinConv, session])
 
   // Unread count in the tab title, like other chat apps.
   useEffect(() => {

@@ -80,7 +80,11 @@ export function ScreenPicker({ onClose }) {
   }
   useEffect(() => { if (sources) reload() }, [sources]) // eslint-disable-line react-hooks/exhaustive-deps
   const full = mine.length >= SCREEN_MAX
-  const pick = src => { c.shareScreen({ ...src, sound: sound && !sharing }); onClose() }
+  const pick = src => { if (src.exe) save('callShareExe', src.exe); c.shareScreen({ ...src, sound: sound && !sharing }); onClose() }
+  // the window you shared last time first, then games (windows filling their screen), then the rest
+  const lastExe = load('callShareExe', '')
+  const wins = list ? [...list.windows].sort((a, b) => (b.exe === lastExe) - (a.exe === lastExe) || (b.full ? 1 : 0) - (a.full ? 1 : 0)) : []
+  const winPick = w => pick({ screen: w.id, name: w.title.slice(0, 40), pid: w.pid, exe: w.exe })
   const head = 'flex items-center gap-1 px-2 pb-0.5 pt-1.5 text-[10.5px] font-semibold uppercase tracking-[0.1em] text-ink-500'
   const opt = (key, label, sub, act) => (
     <button key={key} disabled={full} onClick={act} title={label}
@@ -110,14 +114,21 @@ export function ScreenPicker({ onClose }) {
       {sources ? (
         !list ? <div className="py-3 text-center text-ink-500"><Loader2 size={14} className="inline animate-spin" /></div> : (
           <div className="max-h-72 overflow-y-auto">
+            {wins[0] && (wins[0].exe === lastExe || wins[0].full) && !full && (
+              <button onClick={() => winPick(wins[0])} title={wins[0].title}
+                className="mb-1 flex w-full items-center gap-2 rounded-lg bg-brand-500/15 px-2 py-2 text-left text-[12.5px] ring-1 ring-brand-400/30 hover:bg-brand-500/25">
+                <MonitorUp size={14} className="shrink-0 text-brand-300" />
+                <span className="min-w-0 flex-1 truncate"><b>{wins[0].title}</b> teilen</span>
+              </button>
+            )}
             <div className={head}>Ganzer Bildschirm</div>
             {list.screens.map(x => opt('s:' + x.id, x.label, null, () => pick({ screen: x.id, name: x.label.replace(/\s*\(.*$/, '') })))}
             <div className={head}>
               <span className="flex-1">Nur ein Fenster</span>
               <button onClick={reload} title="Liste neu laden" className="grid h-5 w-5 place-items-center rounded text-ink-500 hover:text-white"><RefreshCw size={11} /></button>
             </div>
-            {list.windows.length
-              ? list.windows.map(w => opt(w.id, w.title, w.exe?.replace(/\.exe$/i, ''), () => pick({ screen: w.id, name: w.title.slice(0, 40), pid: w.pid })))
+            {wins.length
+              ? wins.map(w => opt(w.id, w.title, [w.exe === lastExe ? 'zuletzt' : w.full ? 'Spiel / Vollbild' : null, w.exe?.replace(/\.exe$/i, '')].filter(Boolean).join(' · '), () => winPick(w)))
               : <p className="px-2 py-1 text-[12px] text-ink-500">Kein Fenster gefunden.</p>}
           </div>
         )
@@ -526,8 +537,47 @@ export function LiveBadge({ className = '' }) {
       <button onClick={() => { c.stopScreen(); if (sharing) c.shareProgram(null) }}
         className="shrink-0 rounded-full bg-rose-500 px-3 py-1 text-[11.5px] font-semibold text-white hover:bg-rose-400">Beenden</button>
     </div>
+    <SharePreview />
     <InkAsks className="w-[min(92vw,440px)]" />
     </div>
+  )
+}
+
+/** What you share, small (overlay: under the live bar). Click: big in a window of its own. */
+function SharePreview() {
+  const mine = useCall(s => s.myScreens) || []
+  const streams = useCall(s => s.screens?.me) || {}
+  const [on, setOn] = useState(() => load('callSharePreview', true))
+  const need = useCall(s => s.needPictures)
+  const want = on && mine.length > 0
+  useEffect(() => {
+    if (!want || !need) return
+    need(true)
+    return () => need(false)
+  }, [want, need])
+  if (!mine.length) return null
+  const flip = v => { setOn(v); save('callSharePreview', v) }
+  if (!on) {
+    return <button data-hit style={{ pointerEvents: 'auto' }} onClick={() => flip(true)} className="flex items-center gap-1 rounded-full bg-ink-950/80 px-2 py-0.5 text-[10.5px] text-ink-400 hover:text-white"><Eye size={11} /> Vorschau</button>
+  }
+  return (
+    <div data-hit style={{ pointerEvents: 'auto' }} className="flex items-start gap-1.5">
+      {mine.map(x => <PreviewTile key={x.id} x={x} stream={streams[x.id]} />)}
+      <button onClick={() => flip(false)} title="Vorschau ausblenden" className="grid h-5 w-5 place-items-center rounded-full bg-ink-950/80 text-ink-400 hover:text-white"><EyeOff size={10} /></button>
+    </div>
+  )
+}
+
+function PreviewTile({ x, stream }) {
+  const ref = useRef(null)
+  useEffect(() => { if (ref.current) ref.current.srcObject = stream || null }, [stream])
+  const open = () => useCall.getState().onPic?.('me:' + x.id, 'Du: ' + x.name)
+  return (
+    <button onClick={open} title={`${x.name}: so sehen es die anderen (klicken: groß)`}
+      className="relative h-[90px] w-[160px] overflow-hidden rounded-lg border border-white/10 bg-black shadow-lift">
+      {stream ? <video ref={ref} autoPlay playsInline muted className="h-full w-full object-contain" /> : <span className="grid h-full place-items-center text-[10.5px] text-ink-500">Vorschau kommt …</span>}
+      <span className="absolute bottom-1 left-1 max-w-[150px] truncate rounded bg-black/60 px-1 text-[10px]">{x.name}</span>
+    </button>
   )
 }
 
