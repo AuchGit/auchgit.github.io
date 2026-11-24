@@ -36,6 +36,13 @@ async function call(body) {
   return data
 }
 
+let ready = null
+/** Is our own item data there (function + Blizzard key)? Asked once per start. */
+export function itemsReady() {
+  ready ||= call({ type: 'search', q: '' }).then(() => true, e => (e instanceof NotReady ? false : true))
+  return ready
+}
+
 /** { items, pages, ns } */
 export async function searchItems(q, page = 1) {
   const r = await call({ type: 'search', q, page })

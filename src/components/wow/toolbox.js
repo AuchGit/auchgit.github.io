@@ -2,7 +2,7 @@
 // database, maps …) in one place, in the launcher and in the overlay over the game, plus your
 // own saved builds, items and pages (store/useToolbox.js). First one: WoW Forever, with
 // Wowhead's pages for it (German under /forever/de/…).
-import { BookOpen, Database, Map as MapIcon, Newspaper, Scroll, Shield, Sparkles, Swords } from 'lucide-react'
+import { BookOpen, Database, Gamepad2, Map as MapIcon, Newspaper, Scroll, Shield, Sparkles, Swords } from 'lucide-react'
 import { buildNameIn, buildText } from './wowTalents'
 import { charFrom } from './wowGear'
 
@@ -30,6 +30,8 @@ export const BOXES = [{
     { id: 'talents', name: 'Talente', own: 'talents', url: `${WH}/talent-calc`, Icon: Sparkles, match: /^\/talent-calc/ },
     { id: 'items', name: 'Items', own: 'items', url: `${WH}/items`, Icon: Swords, match: /^\/(items|item=)/ },
     { id: 'gear', name: 'Charakter', own: 'gear', url: `${WH}/items`, Icon: Shield, match: /^$/ },
+    // what the AuchAddOn brought from the game (desktop app: components/toolbox/Game.jsx)
+    { id: 'game', name: 'Im Spiel', own: 'game', desktop: true, url: `${WH}/quests`, Icon: Gamepad2, match: /(?!)/ },
     { id: 'quests', name: 'Quests', url: `${WH}/quests`, Icon: Scroll, match: /^\/(quests|quest=)/ },
     { id: 'maps', name: 'Karten', url: `${WH}/maps`, Icon: MapIcon, match: /^\/(maps?|zone=)/ },
     { id: 'db', name: 'Datenbank', url: `${WH}/database`, Icon: Database, match: /^\/(database|npcs?|npc=|spells?|spell=|objects?|object=)/ },

@@ -144,3 +144,29 @@ export function buildText(url) {
 
 /** "Krieger 31/20/0" */
 export const buildName = (d, b) => `${d.classes[b.cls]?.name || b.cls} ${split(b)}`
+
+/**
+ * The order to put the points in while leveling (one per level from 10): the main tree first
+ * (most points), the lowest open row first, left to right, so each point is allowed when it
+ * comes. [{ t, i, r, c, n }] per point (tree, index in grid order, row, column, name).
+ */
+export function orderOf(d, b) {
+  const trees = d.classes[b.cls].trees
+  const prio = trees.map((_, t) => t).sort((x, y) => treePoints(b, y) - treePoints(b, x))
+  let cur = emptyBuild(d, b.cls)
+  const out = []
+  for (let k = 0; k < total(b); k++) {
+    let pick = null
+    for (const t of prio) {
+      const open = trees[t].talents
+        .map((x, i) => ({ x, i }))
+        .filter(({ i }) => cur.ranks[t][i] < b.ranks[t][i] && canAdd(d, cur, t, i))
+        .sort((p, q) => p.x.r - q.x.r || p.x.c - q.x.c)
+      if (open.length) { pick = { t, ...open[0] }; break }
+    }
+    if (!pick) break
+    cur = add(d, cur, pick.t, pick.i)
+    out.push({ t: pick.t, i: pick.i, r: pick.x.r, c: pick.x.c, n: pick.x.n })
+  }
+  return out
+}

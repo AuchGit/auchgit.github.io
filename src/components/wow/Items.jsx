@@ -3,7 +3,7 @@
 // The website has a copy of this file (scripts/sync-web-toolbox.py).
 import { useEffect, useRef, useState } from 'react'
 import { ArrowLeft, Loader2, Search } from 'lucide-react'
-import { NotReady, QUALITY, fallbackData, getItem, itemNow, searchItems } from './wowItems'
+import { NotReady, QUALITY, fallbackData, getItem, itemNow, itemsReady, searchItems } from './wowItems'
 
 const LINE = { green: 'text-emerald-300', gold: 'text-amber-200', grey: 'text-ink-400', neg: 'text-rose-300' }
 const FALLBACK_ICON = 'https://render.worldofwarcraft.com/eu/icons/56/inv_misc_questionmark.jpg'
@@ -80,8 +80,15 @@ export default function Items({ selected, onSelect, onWeb, compact = false, auto
     return () => { gone = true }
   }, [selected])
 
-  // no own item data yet: an item someone opened (game, chat, list) goes straight to Wowhead
-  useEffect(() => { if (setup && selected && autoWeb) onWeb(`https://www.wowhead.com/forever/de/item=${selected}`) }, [setup, selected]) // eslint-disable-line react-hooks/exhaustive-deps
+  // no own item data yet (no Blizzard key): straight to Wowhead's items in our look, the
+  // toolbar has the search field and the filters there (or the one item that was opened)
+  useEffect(() => {
+    if (!autoWeb) return undefined
+    let gone = false
+    itemsReady().then(ok => { if (!ok && !gone) onWeb(selected ? `https://www.wowhead.com/forever/de/item=${selected}` : 'https://www.wowhead.com/forever/de/items') })
+    return () => { gone = true }
+  }, [selected]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (setup && autoWeb) onWeb(selected ? `https://www.wowhead.com/forever/de/item=${selected}` : 'https://www.wowhead.com/forever/de/items') }, [setup]) // eslint-disable-line react-hooks/exhaustive-deps
   if (setup) {
     return (
       <div className="grid h-full place-items-center p-4 text-center text-[12px] text-ink-300">

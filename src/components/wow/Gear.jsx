@@ -1,6 +1,7 @@
 // The character planner: name, class, talent build, an item per slot, what it all adds up to.
-// Items by pasting a Wowhead link / id, from our item search, or "Anlegen" while an item page
-// is open in the toolbox. The website has a copy (scripts/sync-web-toolbox.py).
+// Items by pasting a Wowhead link / id, by name (Wowhead's list in the toolbox, there
+// "Anlegen"), from what the character has in the game (AuchAddOn), or "Anlegen" while an item
+// page is open in the toolbox. The website has a copy (scripts/sync-web-toolbox.py).
 import { useEffect, useMemo, useState } from 'react'
 import { Loader2, Plus, Sparkles, X } from 'lucide-react'
 import { SLOTS, itemTip, slotFor, slotsFor, tipNow, totals } from './wowGear'
@@ -55,9 +56,10 @@ function Slot({ slot, id, item, onPick, onClear, onHover, active }) {
 /**
  * ch: { cls, talents, gear, name }; onChange(ch). lang: 'de' | 'en'.
  * onTalents(): show the talent calculator with this character's build. buildNow: the
- * calculator's build text right now (to take it over). search(slot): our item search, if there.
+ * calculator's build text right now (to take it over). owned: [{ id, slots, worn }] what this
+ * character has in the game (launcher). onWeb(url): a name typed in -> Wowhead's item list.
  */
-export default function Gear({ ch, onChange, lang = 'de', onTalents, buildNow, compact = false }) {
+export default function Gear({ ch, onChange, lang = 'de', onTalents, buildNow, compact = false, owned = [], onWeb }) {
   const [td, setTd] = useState(talentsNow)
   const [pick, setPick] = useState(null) // slot id waiting for an item
   const [paste, setPaste] = useState('')
@@ -67,13 +69,22 @@ export default function Gear({ ch, onChange, lang = 'de', onTalents, buildNow, c
   useEffect(() => { if (!td) loadTalents().then(setTd) }, [td])
   const ids = SLOTS.map(s => ch.gear?.[s.id] || null)
   const items = useItems(ids, lang)
+  const have = pick ? owned.filter(o => o.slots.includes(pick) && o.id !== ch.gear?.[pick]).slice(0, 12) : []
+  const haveItems = useItems(have.map(o => o.id), lang)
   const sum = useMemo(() => totals(items), [items.map(i => i?.id).join(',')]) // eslint-disable-line react-hooks/exhaustive-deps
   const build = td && ch.talents ? decode(td, ch.talents) : null
   const cls = CLASSES[ch.cls]
 
   async function put(raw) {
     const id = itemIdOf(raw) || (/^\d{1,7}$/.test(String(raw).trim()) ? Number(String(raw).trim()) : null)
-    if (!id) { setError('Wowhead-Link oder Item-Nummer einfügen.'); return }
+    const text = String(raw).trim()
+    // a name: Wowhead's item list with it, in our look (there: open the item, "Anlegen")
+    if (!id && onWeb && text.length >= 2 && !/^https?:/i.test(text)) {
+      onWeb(`https://www.wowhead.com/forever${lang === 'de' ? '/de' : ''}/items/name:${encodeURIComponent(text)}`)
+      setPaste('')
+      return
+    }
+    if (!id) { setError(onWeb ? 'Name, Wowhead-Link oder Item-Nummer eingeben.' : 'Wowhead-Link oder Item-Nummer einfügen.'); return }
     setBusy(true); setError(null)
     try {
       const it = await itemTip(id, lang)
@@ -81,7 +92,7 @@ export default function Gear({ ch, onChange, lang = 'de', onTalents, buildNow, c
       const where = pick && slotsFor(it).includes(pick) ? pick : slotFor(it, ch.gear)
       if (!where) throw new Error('Das lässt sich nicht anlegen (kein Platz dafür).')
       onChange({ ...ch, gear: { ...ch.gear, [where]: id } })
-      setPick(null); setPaste('')
+      setPick(null); setPaste(''); setTip(null)
     } catch (e) { setError(e.message) } finally { setBusy(false) }
   }
   const left = SLOTS.slice(0, 8)
@@ -105,11 +116,27 @@ export default function Gear({ ch, onChange, lang = 'de', onTalents, buildNow, c
       {pick && (
         <form onSubmit={e => { e.preventDefault(); put(paste) }} className="flex shrink-0 items-center gap-1.5 border-b border-white/[0.06] bg-brand-500/[0.06] px-1.5 py-1">
           <span className="shrink-0 text-[11.5px] text-ink-300">{SLOTS.find(s => s.id === pick)?.name}:</span>
-          <input autoFocus value={paste} onChange={e => setPaste(e.target.value)} placeholder="Wowhead-Link oder Item-Nummer, Enter"
+          <input autoFocus value={paste} onChange={e => setPaste(e.target.value)} placeholder={onWeb ? 'Name, Wowhead-Link oder Item-Nummer, Enter' : 'Wowhead-Link oder Item-Nummer, Enter'}
             className="h-6 min-w-0 flex-1 rounded-md bg-black/30 px-1.5 text-[12px] text-white outline-none placeholder:text-ink-500" />
           {busy && <Loader2 size={13} className="animate-spin text-ink-400" />}
           <button type="button" onClick={() => { setPick(null); setError(null) }} className="grid h-6 w-6 place-items-center rounded-md text-ink-400 hover:text-white"><X size={13} /></button>
         </form>
+      )}
+      {pick && have.length > 0 && (
+        <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-white/[0.06] px-1.5 py-1">
+          <span className="text-[10.5px] font-semibold uppercase tracking-wider text-ink-500">Hast du</span>
+          {have.map((o, i) => {
+            const it = haveItems[i]
+            return (
+              <button key={o.id} type="button" onClick={() => put(String(o.id))} title={o.worn ? 'Hast du an' : 'In deinen Taschen'}
+                onPointerEnter={e => it && setTip({ item: it, el: e.currentTarget })} onPointerLeave={() => setTip(null)}
+                className="flex h-7 max-w-[13rem] items-center gap-1 rounded-md bg-white/[0.05] pl-0.5 pr-1.5 text-[11.5px] hover:bg-white/[0.1]">
+                <img src={ICON(it?.icon)} alt="" className="h-6 w-6 shrink-0 rounded border" style={{ borderColor: it ? color(it) : 'rgba(255,255,255,.15)' }} draggable={false} />
+                <span className="truncate" style={it ? { color: color(it) } : undefined}>{it?.name || `Item ${o.id}`}</span>
+              </button>
+            )
+          })}
+        </div>
       )}
       {error && <p className="shrink-0 px-2 py-0.5 text-[11.5px] text-rose-200">{error}</p>}
       <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
@@ -133,7 +160,8 @@ export default function Gear({ ch, onChange, lang = 'de', onTalents, buildNow, c
           </div>
         </div>
       </div>
-      {tip && (() => {
+      {tip && tip.el.isConnected && (() => {
+        // (the hovered element can be gone, e.g. an item that was just put on)
         const r = tip.el.getBoundingClientRect()
         const o = tip.el.closest('.relative').getBoundingClientRect()
         const left = r.right - o.left + 8 + 260 <= o.width ? r.right - o.left + 8 : Math.max(4, r.left - o.left - 268)
