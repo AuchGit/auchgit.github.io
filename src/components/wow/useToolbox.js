@@ -5,6 +5,9 @@
 //   saves  [{ id, box, kind: 'build' | 'item' | 'page', title, url, cls, note, at, synced }] newest first
 //   cloud  null: not asked yet, true: in the account, false: only here (table missing / offline)
 //   want   { url, n }: open this (from the chat, a list); the toolbox that's up goes there
+//   shared what friends sent you in chats (messages with payload.tool), grouped by sender in the
+//          list: [{ id: 'm:<message id>', from, kind, title, url, cls, at }], newest first; on login
+//          from your chats, then live. `hidden`: the ones you took away.
 import { create } from 'zustand'
 // small settings in this browser (same keys as the launcher)
 const PREFIX = 'auch.'
@@ -17,6 +20,7 @@ import { buildText, codeUrl } from './wowTalents'
 
 const KEY = 'toolboxSaves'
 const GONE = 'toolboxGone' // deleted here while the account couldn't be reached
+const HIDDEN = 'toolboxHidden'
 const newId = () => (crypto.randomUUID ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-8xxx-xxxxxxxxxxxx'.replace(/x/g, () => ((Math.random() * 16) | 0).toString(16)))
 const me = () => useSocial.getState().session?.user?.id || null
 const table = () => supabase.from('toolbox_saves')
@@ -32,8 +36,22 @@ export function openTool(url) {
   opener?.(url)
 }
 
+/** A shared tool from a chat message, or null. */
+function fromMessage(m) {
+  const t = m?.payload?.tool
+  if (!t?.url || !/^https?:\/\//i.test(t.url)) return null
+  return { id: 'm:' + m.id, from: m.sender, box: t.box || null, kind: ['build', 'item', 'page'].includes(t.kind) ? t.kind : 'page', title: String(t.title || '').slice(0, 160) || 'Geteilt', url: t.url, cls: t.cls || null, at: Date.parse(m.created_at) || Date.now() }
+}
+/** One per sender and address (the newest). */
+const dedupe = list => {
+  const seen = new Set()
+  return list.filter(e => { const k = e.from + ' ' + e.url; if (seen.has(k)) return false; seen.add(k); return true })
+}
+
 export const useToolbox = create((set, get) => ({
   saves: load(KEY, []),
+  shared: [],
+  hidden: load(HIDDEN, []),
   cloud: null,
   want: null,
   lang: load('toolboxLang', 'de'),
@@ -108,6 +126,40 @@ export const useToolbox = create((set, get) => ({
     for (const s of out) if (!s.synced) await get()._up(s)
   },
 
+  /** What friends shared in your chats (newest 200 messages with a build / item / page). */
+  async loadShared() {
+    const uid = me()
+    if (!supabase || !uid) return
+    const { data, error } = await supabase.from('social_messages').select('id, sender, payload, created_at')
+      .not('payload->tool', 'is', null).neq('sender', uid).order('created_at', { ascending: false }).limit(200)
+    if (!error) set({ shared: dedupe((data || []).map(fromMessage).filter(Boolean)) })
+  },
+  _heard(m) {
+    if (!m?.payload?.tool || !m.sender || m.sender === me()) return
+    const e = fromMessage(m)
+    if (e) set({ shared: dedupe([e, ...get().shared]) })
+  },
+  /** Out of the list (stays in the chat). */
+  hide(id) {
+    const hidden = [...new Set([...get().hidden, id])].slice(-500)
+    save(HIDDEN, hidden)
+    set({ hidden })
+  },
+  /** Into your own list. */
+  adopt(e) { return get().keep({ url: e.url, title: e.title }) },
+
+  /** To a friend (their direct chat, made if needed) or a chat: { friend: userId } | { conv: id }. */
+  async shareTo(entry, to) {
+    let conv = to.conv
+    if (!conv && to.friend) {
+      const { data, error } = await supabase.rpc('social_open_direct', { other: to.friend })
+      if (error || !data) throw new Error('Der Chat ließ sich nicht öffnen.')
+      conv = data
+    }
+    await get().share(entry, conv)
+    return conv
+  },
+
   /** Sends a saved one (or any address) into a chat: a card there, a plain link for old apps. */
   async share(entry, convId) {
     const info = classify(entry.url) || {}
@@ -124,10 +176,26 @@ if (typeof window !== 'undefined') {
   })
 }
 
+// new messages: shared builds land in the list right away (the chat store's message hook)
+let hooked = false
+function hook() {
+  const prev = useSocial.getState()._onMessage
+  if (hooked || typeof prev !== 'function') return
+  hooked = true
+  useSocial.setState({ _onMessage: m => { prev(m); try { useToolbox.getState()._heard(m) } catch { /* never in the chat's way */ } } })
+}
+
 // after logging in: once with the account
 let syncedFor = null
 useSocial.subscribe(s => {
   const id = s.session?.user?.id || null
-  if (id && id !== syncedFor) { syncedFor = id; setTimeout(() => useToolbox.getState().sync().catch(() => {}), 1500) }
-  if (!id) syncedFor = null
+  if (id && id !== syncedFor) {
+    syncedFor = id
+    hook()
+    setTimeout(() => {
+      useToolbox.getState().sync().catch(() => {})
+      useToolbox.getState().loadShared().catch(() => {})
+    }, 1500)
+  }
+  if (!id) { syncedFor = null; useToolbox.setState({ shared: [] }) }
 })

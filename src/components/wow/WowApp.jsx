@@ -11,6 +11,7 @@ import { itemIdOf, itemNow, itemUrl } from './wowItems'
 import { BOX, CLASSES, KIND_LABEL, toolUrl } from './toolbox'
 import { useToolbox } from './useToolbox'
 import { useSocial } from '../chat/useSocial'
+import { SharePick, SharedList } from './Share'
 
 const WEB = BOX.tools.filter(t => !t.own)
 const KIND_COLOR = { build: '#8f82ff', item: '#a335ee', page: '#64748b' }
@@ -20,29 +21,6 @@ function readUrl() {
   if (p.get('b')) return { mode: 'talents', code: p.get('b'), name: (p.get('n') || '').slice(0, 80) }
   if (p.get('item')) return { mode: 'items', item: Number(p.get('item')) || null }
   return { mode: 'talents', code: null }
-}
-
-function SharePick({ entry, onDone }) {
-  const session = useSocial(s => s.session)
-  const convs = useSocial(s => s.convs)
-  const [sent, setSent] = useState(null)
-  const [error, setError] = useState(null)
-  if (!session) return <p className="p-3 text-[12.5px] text-ink-300">Zum Teilen <a href="/konto/" className="underline">einloggen</a>.</p>
-  return (
-    <div className="p-2">
-      <div className="mb-1 flex items-center gap-2 text-[12px] text-ink-300"><Send size={13} /><span className="min-w-0 flex-1 truncate">{entry.title}</span>
-        <button onClick={onDone} className="grid h-6 w-6 place-items-center rounded-md hover:bg-white/[0.08]"><X size={13} /></button></div>
-      {convs.slice(0, 30).map(c => (
-        <button key={c.id} disabled={!!sent} onClick={async () => {
-          try { await useToolbox.getState().share(entry, c.id); setSent(c.id); setTimeout(onDone, 700) } catch (e) { setError(e.message) }
-        }} className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] text-ink-200 hover:bg-white/[0.07]">
-          <span className="min-w-0 flex-1 truncate">{c.title}</span>{sent === c.id && <Check size={14} className="text-emerald-300" />}
-        </button>
-      ))}
-      {!convs.length && <p className="px-2 py-2 text-[12px] text-ink-500">Noch keine Chats.</p>}
-      {error && <p className="px-2 text-[12px] text-rose-200">{error}</p>}
-    </div>
-  )
 }
 
 export default function WowApp() {
@@ -104,7 +82,7 @@ export default function WowApp() {
           onClick={() => { if (here && !kept) { const e = useToolbox.getState().keep({ url: here.url, title: here.title }); if (mode === 'talents' && !name.trim()) setName(e.title) } setPanel('saved') }}>
           {kept ? <BookmarkCheck size={15} className="text-brand-300" /> : <Bookmark size={15} />}
         </button>
-        <button className={btn} disabled={!here} title="In einen Chat schicken" onClick={() => setPanel({ share: here })}><Send size={14} /></button>
+        <button className={btn} disabled={!here} title="An einen Freund schicken (kommt als Nachricht im Chat an)" onClick={() => setPanel({ share: here })}><Send size={14} /></button>
         <button className={btn} disabled={!here} title="Link kopieren" onClick={async () => { await navigator.clipboard?.writeText(here.url); setCopied(true); setTimeout(() => setCopied(false), 1500) }}>
           {copied ? <Check size={15} className="text-emerald-300" /> : <Copy size={14} />}
         </button>
@@ -112,7 +90,7 @@ export default function WowApp() {
       <div className="flex min-h-0 flex-1">
         {panel && (
           <aside className="w-64 shrink-0 overflow-y-auto border-r border-white/[0.06]">
-            {panel.share ? <SharePick entry={panel.share} onDone={() => setPanel(null)} /> : (
+            {panel.share ? <SharePick big entry={panel.share} onDone={() => setPanel(null)} /> : (
               <div className="p-1.5">
                 {saves.map(s => renaming === s.id ? (
                   <form key={s.id} className="flex h-8 items-center gap-1 px-1" onSubmit={e => {
@@ -137,6 +115,7 @@ export default function WowApp() {
                   </div>
                 ))}
                 {!saves.length && <p className="px-2 py-2 text-[12px] leading-snug text-ink-500">Noch nichts gemerkt. Oben auf das Lesezeichen. Mit Account landet es auch im Launcher.</p>}
+                <SharedList big activeUrl={here?.url} onOpen={open} />
               </div>
             )}
           </aside>

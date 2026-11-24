@@ -52,6 +52,15 @@ export function restOf(url) {
   } catch { return '' }
 }
 
+/** A Wowhead list page (items, quests …): its address without filters, for our search field ("…/name:Text"). */
+export function listOf(url) {
+  const rest = restOf(url)
+  const m = rest.match(/^\/(items|quests|npcs|spells|objects|zones)(?=[/?]|$)/i)
+  if (!m) return null
+  const head = url.slice(0, url.indexOf(rest))
+  return { base: head + '/' + m[1].toLowerCase(), what: { items: 'Items', quests: 'Quests', npcs: 'NPCs', spells: 'Zauber', objects: 'Objekte', zones: 'Gebiete' }[m[1].toLowerCase()] }
+}
+
 /** Which tool a page belongs to (for the active tab). */
 export const toolOf = url => {
   const rest = restOf(url)
