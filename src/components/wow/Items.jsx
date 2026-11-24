@@ -35,7 +35,7 @@ export function ItemTip({ item, compact = false }) {
  * selected: item id shown on the right; onSelect(id, name). onWeb(url): open a page in the
  * web view (Wowhead) when our data isn't there yet.
  */
-export default function Items({ selected, onSelect, onWeb, compact = false }) {
+export default function Items({ selected, onSelect, onWeb, compact = false, autoWeb = false }) {
   const [q, setQ] = useState('')
   const [list, setList] = useState(null)     // null: nothing searched yet
   const [busy, setBusy] = useState(false)
@@ -80,6 +80,8 @@ export default function Items({ selected, onSelect, onWeb, compact = false }) {
     return () => { gone = true }
   }, [selected])
 
+  // no own item data yet: an item someone opened (game, chat, list) goes straight to Wowhead
+  useEffect(() => { if (setup && selected && autoWeb) onWeb(`https://www.wowhead.com/forever/de/item=${selected}`) }, [setup, selected]) // eslint-disable-line react-hooks/exhaustive-deps
   if (setup) {
     return (
       <div className="grid h-full place-items-center p-4 text-center text-[12px] text-ink-300">
