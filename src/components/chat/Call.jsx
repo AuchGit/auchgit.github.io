@@ -12,6 +12,7 @@ import {
   Layers, Loader2, Maximize2, MessageSquare, Mic, MicOff, Minus, MonitorUp, Music2, PanelBottom, Pencil, Phone, PhoneOff, PictureInPicture2, Pin, Plus, RefreshCw, Rows2, Shrink,
   SlidersHorizontal, Square, Upload, UserPlus, Users, Video, VideoOff, Volume2, X,
 } from 'lucide-react'
+import { TalkSettings, keyLabel } from './Talk'
 import { SCREEN_MAX, callBus, useCall } from './useCall'
 import { canInk, useInk } from './useInk'
 import { InkAllow, InkBar, InkLayer, inkLabel } from './Ink'
@@ -46,11 +47,11 @@ function useTick(on) {
 }
 
 /** Round button for the call bar. */
-function Btn({ on, danger, title, onClick, children, small }) {
+function Btn({ on, danger, title, onClick, children, small, ring }) {
   const size = small ? 'h-8 w-8' : 'h-9 w-9'
   return (
     <button onClick={onClick} title={title} aria-label={title}
-      className={`grid ${size} shrink-0 place-items-center rounded-full transition ${danger ? 'bg-rose-500 text-white hover:bg-rose-400' : on ? 'bg-white/[0.14] text-white' : 'bg-white/[0.06] text-ink-200 hover:bg-white/[0.1] hover:text-white'}`}>
+      className={`grid ${size} shrink-0 place-items-center rounded-full transition ${ring ? 'ring-2 ring-emerald-400/80' : ''} ${danger ? 'bg-rose-500 text-white hover:bg-rose-400' : on ? 'bg-white/[0.14] text-white' : 'bg-white/[0.06] text-ink-200 hover:bg-white/[0.1] hover:text-white'}`}>
       {children}
     </button>
   )
@@ -223,6 +224,7 @@ export function BoardPicker({ onClose }) {
 
 /** Quick switch: microphone, speakers, camera, both volumes, own picture. */
 export function DevicePicker({ onClose }) {
+  // (how you talk: on top, one click from the call)
   const devices = useCall(s => s.devices)
   const device = useCall(s => s.device)
   const levels = useCall(s => s.levels)
@@ -242,9 +244,11 @@ export function DevicePicker({ onClose }) {
   return (
     <div data-hit className="w-72 space-y-2.5 rounded-xl border border-white/[0.08] bg-ink-900 p-3 shadow-lift">
       <div className="flex items-center justify-between">
-        <span className="text-[11px] font-semibold uppercase tracking-[0.1em] text-ink-400">Geräte</span>
+        <span className="text-[11px] font-semibold uppercase tracking-[0.1em] text-ink-400">Sprechen und Geräte</span>
         <button className="text-ink-500 hover:text-white" onClick={onClose}><X size={13} /></button>
       </div>
+      <TalkSettings compact />
+      <div className="h-px bg-white/[0.06]" />
       {sel('input', devices?.input, 'Mikrofon')}
       <Slider label="Pegel" Icon={Mic} value={levels?.input ?? 100} onChange={v => c.setLevel('input', v)} />
       {sel('output', devices?.output, 'Lautsprecher / Kopfhörer')}
@@ -418,8 +422,22 @@ export const usePictures = () => useCall(s => Object.keys(s.videos || {}).some(k
   || (s.camera && s.selfView && !!s.videos?.me))
 
 /** The call buttons. `mini`: only the most needed ones (picture in picture). */
+/** Mic button: muted / talking (by voice or key: a green ring while something goes out). */
+function MicBtn({ small, size = 16 }) {
+  const muted = useCall(s => s.muted)
+  const mode = useCall(s => s.micMode)
+  const talking = useCall(s => s.talking)
+  const key = useCall(s => s.pttKey)
+  const how = mode === 'ptt' ? ` · Push-to-Talk: ${keyLabel(key)} halten` : mode === 'voice' ? ' · geht bei Stimme auf' : ''
+  return (
+    <Btn small={small} on={muted} ring={!muted && mode !== 'open' && talking} title={(muted ? 'Mikro an' : 'Mikro aus') + how} onClick={() => useCall.getState().toggleMute()}>
+      {muted ? <MicOff size={size} className="text-rose-300" /> : <Mic size={size} className={mode !== 'open' && !talking ? 'opacity-50' : ''} />}
+    </Btn>
+  )
+}
+
 export function ControlBar({ compact = false, mini = false, floating = false }) {
-  const { muted, deaf, camera, sharing } = useCall()
+  const { deaf, camera, sharing } = useCall()
   const myScreens = useCall(s => s.myScreens) || []
   const playing = useCall(s => s.boardPlaying)
   const mirror = useCall(s => s.mirror)
@@ -429,7 +447,7 @@ export function ControlBar({ compact = false, mini = false, floating = false }) 
   const small = compact || mini
   return (
     <div className={`relative flex items-center justify-center gap-1.5 ${floating ? 'rounded-full border border-white/[0.08] bg-ink-900/[0.92] px-2 py-1.5 shadow-lift backdrop-blur' : 'border-t border-white/[0.06] px-3 py-2.5'}`}>
-      <Btn small={small} on={muted} title={muted ? 'Mikro an' : 'Mikro aus'} onClick={() => c.toggleMute()}>{muted ? <MicOff size={16} className="text-rose-300" /> : <Mic size={16} />}</Btn>
+      <MicBtn small={small} />
       <Btn small={small} on={deaf} title={deaf ? 'Wieder hören' : 'Nichts hören'} onClick={() => c.toggleDeaf()}>{deaf ? <HeadphoneOff size={16} className="text-rose-300" /> : <Headphones size={16} />}</Btn>
       <Btn small={small} on={camera} title={camera ? 'Kamera aus' : 'Kamera an'} onClick={() => c.toggleCamera()}>{camera ? <Video size={16} className="text-emerald-300" /> : <VideoOff size={16} />}</Btn>
       {!mini && (
@@ -916,7 +934,7 @@ export function CallDock() {
         <Phone size={14} className="shrink-0 text-emerald-400" />
         <button className="max-w-[150px] truncate text-left text-[12.5px] font-semibold hover:underline" title="Aufklappen" onClick={() => small(false)}>{call.title}</button>
         <span className="text-[11px] tabular-nums text-ink-400">{outgoing ? 'klingelt' : `${since(call.since)}${n ? ` · ${n + 1}` : ''}`}</span>
-        <Btn small on={muted} title={muted ? 'Mikro an' : 'Mikro aus'} onClick={() => useCall.getState().toggleMute()}>{muted ? <MicOff size={15} className="text-rose-300" /> : <Mic size={15} />}</Btn>
+        <MicBtn small size={15} />
         <Btn small title="Aufklappen" onClick={() => small(false)}><Maximize2 size={14} /></Btn>
         <Btn small danger title="Auflegen" onClick={() => useCall.getState().leave()}><PhoneOff size={15} /></Btn>
       </div>

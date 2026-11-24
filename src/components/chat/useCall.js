@@ -94,7 +94,7 @@ function sideChannel(convId) {
 /** The launcher window says where the call can show (overlays ask for it with setView). */
 export function onCallView(fn) { viewHook = fn }
 let meterTimer = null
-const local = { micRaw: null, micSource: null, micGain: null, micAnalyser: null, micSend: null, out: null, progStream: null, progNode: null, progChannel: null, camStream: null, screens: new Map(), native: new Map(), boardGain: null, boardMon: null, boardSend: null }
+const local = { micRaw: null, micSource: null, micGain: null, micPre: null, micGate: null, micAnalyser: null, micSend: null, out: null, progStream: null, progNode: null, progChannel: null, camStream: null, screens: new Map(), native: new Map(), boardGain: null, boardMon: null, boardSend: null }
 const boardCache = new Map() // sound id -> AudioBuffer
 const boardSources = new Set()
 let ringOutTimer = null
@@ -215,16 +215,37 @@ function micConstraints(id = settings().callInput) {
   return { audio: { deviceId: id ? { exact: id } : undefined, echoCancellation: s.callEcho !== false, noiseSuppression: s.callNoise !== false, autoGainControl: true } }
 }
 
+// ------------------------------------------------------------------ talking: open, by voice, push-to-talk
+// Mic -> level (micGain) -> gate (micGate) -> what goes out. `micPre` hears before the gate (voice
+// activation measures there), `micAnalyser` after it (the "you're talking" ring).
+//   callMicMode   'open' (always) | 'voice' (opens while you're louder than callVoiceLevel dB)
+//                 | 'ptt' (while callPttKey is held; the desktop app watches it over games too)
+const VOICE_HANG = 450 // ms the gate stays open after the voice drops (no cut-off word ends)
+const PTT_TAIL = 200   // ms after letting go of the key
+const gate = { open: true, last: 0, ptt: false, up: 0 }
+const gateBuf = new Float32Array(512)
+let gateTimer = null
+export const micModeOf = s => (s?.callMicMode === 'voice' || s?.callMicMode === 'ptt' ? s.callMicMode : 'open')
+/** Level in dB (-100 for silence). */
+export const dbOf = v => (v > 0 ? Math.max(-100, 20 * Math.log10(v)) : -100)
+
 /** A (new) microphone into the send chain; the sent stream stays the same. */
 function wireMic(raw) {
   const ac = audioCtx()
   if (!local.micGain || local.micGain.context !== ac) {
     local.micGain = ac.createGain()
+    local.micPre = ac.createAnalyser()
+    local.micPre.fftSize = 512
+    local.micGate = ac.createGain()
+    local.micGate.gain.value = micModeOf(settings()) === 'open' ? 1 : 0
+    gate.open = local.micGate.gain.value === 1
     local.micAnalyser = ac.createAnalyser()
     local.micAnalyser.fftSize = 512
     const dest = ac.createMediaStreamDestination()
-    local.micGain.connect(local.micAnalyser)
-    local.micGain.connect(dest)
+    local.micGain.connect(local.micPre)
+    local.micGain.connect(local.micGate)
+    local.micGate.connect(local.micAnalyser)
+    local.micGate.connect(dest)
     local.micSend = dest.stream
   }
   try { local.micSource?.disconnect() } catch { /* gone */ }
@@ -247,6 +268,12 @@ export const useCall = create((set, get) => ({
   members: {},       // userId -> { name, avatar, muted, deaf, video, stream, state }
   speaking: {},      // userId (and 'me') -> true while talking
   muted: false,
+  micMode: micModeOf(load('settings', {})), // 'open' | 'voice' | 'ptt'
+  talking: true,     // the gate is open (what you say goes out)
+  noise: load('settings', {}).callNoise !== false,
+  voiceLevel: load('settings', {}).callVoiceLevel ?? -48,
+  pttKey: load('settings', {}).callPttKey || 'KeyV',
+  inputDb: -100,     // your mic before the gate, in dB (voice activation's meter), while in a call
   deaf: false,
   sharing: null,     // { pid, name } while program sound goes out
   camera: false,
@@ -353,11 +380,15 @@ export const useCall = create((set, get) => ({
         channel?.send({ type: 'broadcast', event: 'move', payload: { uid, inst: INST } })
       })
     meterTimer = setInterval(() => get()._meter(), 120)
+    clearInterval(gateTimer)
+    gateTimer = setInterval(() => get()._gate(), 20)
     if (video) get().toggleCamera().catch(() => {})
   },
 
   async leave() {
     clearInterval(meterTimer)
+    clearInterval(gateTimer)
+    gate.ptt = false
     clearTimeout(ringOutTimer)
     clearTimeout(aloneTimer)
     aloneTimer = null
@@ -633,6 +664,58 @@ export const useCall = create((set, get) => ({
     for (const [id, p] of peers) if (p.audio.voice) next[id] = rms(p.audio.voice.analyser, buf) > SPEAK
     const was = get().speaking
     if (Object.keys(next).some(k => !!next[k] !== !!was[k]) || Object.keys(was).some(k => !!was[k] && !next[k])) set({ speaking: next })
+  },
+
+  /** The gate: open / by voice / push-to-talk (every 20 ms while in a call). */
+  _gate() {
+    if (!local.micGate || !local.micPre) return
+    const mode = micModeOf(settings())
+    const now = performance.now()
+    let open = true
+    const db = dbOf(rms(local.micPre, gateBuf))
+    if (mode === 'voice') {
+      if (db > (settings().callVoiceLevel ?? -48)) gate.last = now
+      open = now - gate.last < VOICE_HANG
+    } else if (mode === 'ptt') open = gate.ptt || now - gate.up < PTT_TAIL
+    if (Math.abs(db - get().inputDb) > 2) set({ inputDb: Math.round(db) })
+    if (open === gate.open) return
+    gate.open = open
+    const ac = local.micGate.context
+    local.micGate.gain.cancelScheduledValues(ac.currentTime)
+    local.micGate.gain.setTargetAtTime(open ? 1 : 0, ac.currentTime, open ? 0.004 : 0.03)
+    set({ talking: open })
+  },
+  /** Push-to-talk key down / up (desktop: Rust ptt.rs over games; browser: keys on the page). */
+  setPtt(down) {
+    if (gate.ptt === !!down) return
+    gate.ptt = !!down
+    if (!down) gate.up = performance.now()
+    get()._gate()
+  },
+  setMicMode(mode) {
+    const m = micModeOf({ callMicMode: mode })
+    setSetting('callMicMode', m)
+    gate.ptt = false
+    set({ micMode: m })
+    get()._gate()
+  },
+  setPttKey(key) {
+    if (!key) return
+    setSetting('callPttKey', key)
+    gate.ptt = false
+    set({ pttKey: key })
+  },
+  setVoiceLevel(db) {
+    const v = Math.max(-75, Math.min(-10, Math.round(db)))
+    setSetting('callVoiceLevel', v)
+    set({ voiceLevel: v })
+  },
+  /** Noise filter on / off: the mic opens again with it (the sent track stays). */
+  async toggleNoise() {
+    const noise = settings().callNoise === false
+    setSetting('callNoise', noise)
+    set({ noise })
+    if (local.micRaw && get().call) await get()._applyDevice('input')
   },
 
   // ------------------------------------------------------------------ controls
