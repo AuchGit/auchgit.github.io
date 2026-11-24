@@ -2,8 +2,9 @@
 // database, maps …) in one place, in the launcher and in the overlay over the game, plus your
 // own saved builds, items and pages (store/useToolbox.js). First one: WoW Forever, with
 // Wowhead's pages for it (German under /forever/de/…).
-import { BookOpen, Database, Map as MapIcon, Newspaper, Scroll, Sparkles, Swords } from 'lucide-react'
+import { BookOpen, Database, Map as MapIcon, Newspaper, Scroll, Shield, Sparkles, Swords } from 'lucide-react'
 import { buildNameIn, buildText } from './wowTalents'
+import { charFrom } from './wowGear'
 
 const WH = 'https://www.wowhead.com/forever'
 
@@ -28,6 +29,7 @@ export const BOXES = [{
     // own (in our look: components/toolbox/Talents.jsx, Items.jsx); url = Wowhead's, for "there instead"
     { id: 'talents', name: 'Talente', own: 'talents', url: `${WH}/talent-calc`, Icon: Sparkles, match: /^\/talent-calc/ },
     { id: 'items', name: 'Items', own: 'items', url: `${WH}/items`, Icon: Swords, match: /^\/(items|item=)/ },
+    { id: 'gear', name: 'Charakter', own: 'gear', url: `${WH}/items`, Icon: Shield, match: /^$/ },
     { id: 'quests', name: 'Quests', url: `${WH}/quests`, Icon: Scroll, match: /^\/(quests|quest=)/ },
     { id: 'maps', name: 'Karten', url: `${WH}/maps`, Icon: MapIcon, match: /^\/(maps?|zone=)/ },
     { id: 'db', name: 'Datenbank', url: `${WH}/database`, Icon: Database, match: /^\/(database|npcs?|npc=|spells?|spell=|objects?|object=)/ },
@@ -77,7 +79,9 @@ export function classify(url) {
   let u
   try { u = new URL(url) } catch { return null }
   if (!/^https?:$/.test(u.protocol)) return null
-  // our own build links (auchgit.github.io/wow/?b=warrior/05-5)
+  // our own character links (auchgit.github.io/wow/?c=…) and build links (…/wow/?b=warrior/05-5)
+  const ch = charFrom(url)
+  if (ch && /auchgit\.github\.io|localhost/.test(u.hostname)) return { box: BOX.id, kind: 'build', cls: ch.cls, what: 'Charakter', char: true }
   const code = buildText(url)
   if (code) return { box: BOX.id, kind: 'build', cls: code.split('/')[0].toLowerCase(), what: 'Talente' }
   const rest = restOf(url)
@@ -94,6 +98,7 @@ export function classify(url) {
 
 /** A good name from the page's title (Wowhead: "Name - Item - WoW Forever"), else from the address. */
 export function nameFor(url, title, info = classify(url)) {
+  if (info?.char) return buildNameIn(url) || `${CLASSES[info.cls]?.name || 'Held'} (Charakter)`
   if (info?.kind === 'build') return buildNameIn(url) || `${CLASSES[info.cls]?.name || 'Talent'}-Build`
   let t = String(title || '').replace(/^\[(.*)\]$/, '$1')
   t = t.replace(/\s+-\s+(Item|Gegenstand|Quest|NPC|Spell|Zauber|Zone|Gebiet|Object|Objekt|Faction|Fraktion|Guide)\s+-\s+.*$/i, '')
@@ -107,9 +112,11 @@ export function nameFor(url, title, info = classify(url)) {
 
 /** Kind labels for lists and chat cards. */
 export const KIND_LABEL = { build: 'Build', item: 'Item', page: 'Seite' }
+/** "Build" / "Charakter" / "Item" / "Seite" for an entry. */
+export const kindLabel = e => (e?.url && /[?&]c=/.test(e.url) && classify(e.url)?.char ? 'Charakter' : KIND_LABEL[e?.kind] || 'Seite')
 
 /** A chat message that is only a WoW Forever link: shown as a card too. */
 export function toolLink(body) {
   const s = String(body || '').trim()
-  return /^https?:\/\/\S+$/.test(s) && (restOf(s) || buildText(s)) ? s : null
+  return /^https?:\/\/\S+$/.test(s) && (restOf(s) || buildText(s) || classify(s)?.char) ? s : null
 }

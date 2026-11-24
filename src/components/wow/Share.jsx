@@ -5,7 +5,7 @@
 //   SharedList  "Von <Name>": what friends sent you in chats, open, take over, take away
 import { useMemo, useState } from 'react'
 import { BookmarkPlus, Check, Search, Send, X } from 'lucide-react'
-import { CLASSES, KIND_LABEL } from './toolbox'
+import { CLASSES, kindLabel } from './toolbox'
 import { useToolbox } from './useToolbox'
 import { useSocial } from '../chat/useSocial'
 
@@ -96,7 +96,7 @@ export function SharedList({ filter = 'all', activeUrl, onOpen, big = false }) {
             className={`group flex ${big ? 'h-8 text-[13px]' : 'h-7 text-[12px]'} cursor-pointer items-center gap-1.5 rounded-md pl-1 pr-0.5 ${activeUrl === e.url ? 'bg-white/[0.08] text-white' : 'text-ink-200 hover:bg-white/[0.05]'}`}>
             <span className="h-4 w-[3px] shrink-0 rounded-full" style={{ background: colorOf(e) }} />
             <span className="min-w-0 flex-1 truncate">{e.title}</span>
-            <span className="shrink-0 text-[10px] text-ink-500 group-hover:hidden">{KIND_LABEL[e.kind]}</span>
+            <span className="shrink-0 text-[10px] text-ink-500 group-hover:hidden">{kindLabel(e)}</span>
             <span className="hidden shrink-0 group-hover:flex" onClick={ev => ev.stopPropagation()}>
               {!mine && <button type="button" title="In meine Liste" onClick={() => useToolbox.getState().adopt(e)} className={btn}><BookmarkPlus size={12} /></button>}
               <button type="button" title="Aus der Liste nehmen (bleibt im Chat)" onClick={() => useToolbox.getState().hide(e.id)} className={btn}><X size={12} /></button>

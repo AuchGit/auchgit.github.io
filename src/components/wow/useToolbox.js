@@ -17,6 +17,7 @@ import { supabase } from '../../lib/supabase'
 import { useSocial } from '../chat/useSocial'
 import { classify, nameFor } from './toolbox'
 import { buildText, codeUrl } from './wowTalents'
+import { charFrom } from './wowGear'
 
 const KEY = 'toolboxSaves'
 const GONE = 'toolboxGone' // deleted here while the account couldn't be reached
@@ -68,8 +69,10 @@ export const useToolbox = create((set, get) => ({
     const info = classify(url) || { box: null, kind: 'page' }
     const code = buildText(url)
     const cls = code?.split('/')[0]
+    const ch = charFrom(url)
     const old = get().saves.find(x => x.url === url)
       || (code && title && get().saves.find(x => x.kind === 'build' && x.title === title && buildText(x.url)?.split('/')[0] === cls))
+      || (ch && title && get().saves.find(x => x.title === title && charFrom(x.url)?.cls === ch.cls))
       || (code && get().saves.find(x => buildText(x.url) === code))
     const entry = old
       ? { ...old, url, ...(title ? { title } : {}), ...(note != null ? { note } : {}), at: Date.now(), synced: false }
