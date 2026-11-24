@@ -154,18 +154,22 @@ export function EmoteForm({ src, edit, code: first = '', onDone }) {
   const [sure, setSure] = useState(false)
   const [crop, setCrop] = useState(() => (src ? src.box : null))
   const [square, setSquare] = useState(false)
+  const [taken, setTaken] = useState(null) // one of yours has this name: replace it?
   const canCrop = !!src && (!src.animated || src.recode)
   const done = v => { if (src?.url) URL.revokeObjectURL(src.url); onDone(v) }
-  async function save() {
+  async function save(replace = false) {
     if (busy) return
-    setBusy(true); setError(null)
+    setBusy(true); setError(null); setTaken(null)
     try {
       if (edit) { if (code !== edit.code) await useEmotes.getState().rename(edit.id, code) } else {
         const img = await prepareEmote(src, canCrop ? crop : null)
-        try { await useEmotes.getState().add(img, code) } finally { URL.revokeObjectURL(img.url) }
+        try { await useEmotes.getState().add(img, code, { replace }) } finally { URL.revokeObjectURL(img.url) }
       }
       done(code)
-    } catch (e) { setError(e.message); setBusy(false) }
+    } catch (e) {
+      if (e.mine) setTaken(e.mine); else setError(e.message)
+      setBusy(false)
+    }
   }
   async function del() {
     if (!sure) { setSure(true); setTimeout(() => setSure(false), 3000); return }
@@ -198,11 +202,19 @@ export function EmoteForm({ src, edit, code: first = '', onDone }) {
           <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-500">Name</span>
           <input autoFocus value={code} placeholder="z. B. hypeKatze"
             onChange={e => setCode(e.target.value.replace(/[^A-Za-z0-9_]/g, '').slice(0, 24))}
+            onChangeCapture={() => taken && setTaken(null)}
             onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); save() } }}
             className="mt-0.5 h-8 w-full rounded-lg border border-white/10 bg-white/[0.05] px-2.5 text-[13px] text-white outline-none focus-visible:outline-none placeholder:text-ink-500 focus:border-brand-400" />
         </label>
       </div>
-      {error ? <p className="mt-2 text-[11.5px] leading-snug text-rose-200">{error}</p>
+      {taken ? (
+        <div className="mt-2 flex items-center gap-2 rounded-lg bg-amber-400/10 px-2 py-1.5 text-[11.5px] leading-snug text-amber-100">
+          {taken.url && <img src={taken.url} alt="" className="max-h-6 max-w-[28px] shrink-0" />}
+          <span className="min-w-0 flex-1">Du hast schon <b>{taken.code}</b>. Das Bild ersetzen?</span>
+          <button type="button" onClick={() => save(true)} className="h-6 shrink-0 rounded-md bg-amber-400/80 px-2 font-semibold text-ink-950 hover:bg-amber-300">Ersetzen</button>
+          <button type="button" onClick={() => setTaken(null)} className="h-6 shrink-0 rounded-md px-1.5 text-amber-100/80 hover:text-white">Nein</button>
+        </div>
+      ) : error ? <p className="mt-2 text-[11.5px] leading-snug text-rose-200">{error}</p>
         : !edit && <p className="mt-2 text-[11px] leading-snug text-ink-500">{src.animated ? (src.recode ? 'Bewegt sich. Zugeschnitten wird es neu als GIF gespeichert. ' : 'Bewegt sich. Zuschneiden geht bei bewegten Bildern hier nicht. ') : ''}Am besten ein Name, den man nicht aus Versehen schreibt. Groß und klein zählt.</p>}
       <div className="mt-2 flex items-center gap-1.5">
         {edit && (
@@ -211,7 +223,7 @@ export function EmoteForm({ src, edit, code: first = '', onDone }) {
         )}
         <div className="flex-1" />
         <button type="button" onClick={() => done(undefined)} className="btn-ghost inline-flex h-7 items-center rounded-lg px-2.5 text-[12px] font-semibold">Abbrechen</button>
-        <button type="button" onClick={save} disabled={busy || code.length < 2} className="btn-brand inline-flex h-7 min-w-[78px] items-center justify-center rounded-lg px-3 text-[12px] font-semibold disabled:opacity-50">
+        <button type="button" onClick={() => save()} disabled={busy || code.length < 2} className="btn-brand inline-flex h-7 min-w-[78px] items-center justify-center rounded-lg px-3 text-[12px] font-semibold disabled:opacity-50">
           {busy ? <Loader2 size={13} className="mx-auto animate-spin" /> : 'Speichern'}
         </button>
       </div>

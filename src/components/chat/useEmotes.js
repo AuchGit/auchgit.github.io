@@ -21,7 +21,8 @@ const uid = () => useSocial.getState().session?.user?.id || null
 function emoteError(e) {
   const m = String(e?.message || e || '')
   if (/emote_limit/.test(m)) return `Mehr als ${EMOTE_MAX} eigene Emotes gehen nicht. Lösch erst eins.`
-  if (e?.code === '23505' || /duplicate key|social_emotes_code/.test(m)) return 'Den Namen hat schon jemand. Nimm einen anderen.'
+  // someone you can't see (not a friend) has it: no name, the database doesn't show it anyway
+  if (e?.code === '23505' || /duplicate key|social_emotes_code/.test(m)) return 'Den Namen hat schon jemand anderes. Nimm einen anderen.'
   if (/social_emotes|does not exist|schema cache/i.test(m)) return 'Eigene Emotes sind noch nicht freigeschaltet.'
   if (/mime|content type|not supported/i.test(m)) return 'Das Bildformat geht nicht. Nimm PNG, JPG, WebP oder GIF.'
   if (/exceeded|too large|payload/i.test(m)) return 'Das Bild ist zu groß.'
@@ -48,12 +49,18 @@ export const useEmotes = create((set, get) => ({
 
   mine() { const me = uid(); return get().list.filter(r => r.owner === me) },
 
-  /** A prepared picture (prepareEmote) under a new name. */
-  async add(img, code) {
+  /**
+   * A prepared picture (prepareEmote) under a name. One of yours with that name: an error
+   * with `.mine` (the UI asks), or with { replace: true } its picture is swapped.
+   */
+  async add(img, code, { replace = false } = {}) {
     const me = uid()
     if (!me) throw new Error('Dafür musst du angemeldet sein.')
     if (get().missing) throw new Error(emoteError('social_emotes'))
-    const c = checkCode(code)
+    const c = checkCode(code, null, { own: true })
+    const own = get().mine().find(r => r.code.toLowerCase() === c.toLowerCase())
+    if (own && !replace) throw Object.assign(new Error(`Du hast schon ein Emote namens ${own.code}.`), { mine: { ...own, url: emoteUrl(own.path) } })
+    if (own) return get().replace(own.id, img)
     if (get().mine().length >= EMOTE_MAX) throw new Error(emoteError('emote_limit'))
     const path = `${me}/e-${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}.${img.ext}`
     const up = await supabase.storage.from('avatars').upload(path, img.blob, { contentType: img.type, cacheControl: '31536000' })
@@ -65,6 +72,25 @@ export const useEmotes = create((set, get) => ({
       throw new Error(emoteError(error))
     }
     set({ list: [...get().list, data] })
+    return data
+  },
+
+  /** A new picture for one of yours (same name; the old picture goes). */
+  async replace(id, img) {
+    const me = uid()
+    const row = get().list.find(r => r.id === id)
+    if (!me || !row) throw new Error('Das Emote gibt es nicht mehr.')
+    const path = `${me}/e-${crypto.randomUUID().replace(/-/g, '').slice(0, 16)}.${img.ext}`
+    const up = await supabase.storage.from('avatars').upload(path, img.blob, { contentType: img.type, cacheControl: '31536000' })
+    if (up.error) throw new Error(emoteError(up.error))
+    const { data, error } = await supabase.from('social_emotes').update({ path, animated: img.animated }).eq('id', id)
+      .select('id, owner, code, path, animated, created_at').single()
+    if (error) {
+      supabase.storage.from('avatars').remove([path]).catch(() => {})
+      throw new Error(emoteError(error))
+    }
+    set({ list: get().list.map(r => (r.id === id ? data : r)) })
+    supabase.storage.from('avatars').remove([row.path]).catch(() => {})
     return data
   },
 
@@ -84,11 +110,20 @@ export const useEmotes = create((set, get) => ({
   },
 }))
 
-function checkCode(code, except = null) {
+/** own: one of your own with that name is fine here (add asks to replace it). */
+function checkCode(code, except = null, { own = false } = {}) {
   const c = String(code || '').trim()
   if (!CODE_RE.test(c)) throw new Error('Der Name braucht 2 bis 24 Zeichen: Buchstaben ohne Umlaute, Zahlen oder _.')
   if (builtin(c)) throw new Error('So heißt schon ein Twitch-Emote.')
-  if (useEmotes.getState().list.some(r => r.id !== except && r.code.toLowerCase() === c.toLowerCase())) throw new Error('Den Namen gibt es schon.')
+  const me = uid()
+  const hit = useEmotes.getState().list.find(r => r.id !== except && r.code.toLowerCase() === c.toLowerCase())
+  if (hit && hit.owner === me && !own) throw new Error('Den Namen hast du schon für ein anderes Emote.')
+  // a friend's (the list only has yours and your friends'): say whose
+  if (hit && hit.owner !== me) {
+    const s = useSocial.getState()
+    const who = s.nameOf?.(hit.owner) || s.friends?.find(f => f.user_id === hit.owner)?.player_name
+    throw new Error(who ? `Den Namen hat schon ${who}. Nimm einen anderen.` : 'Den Namen hat schon jemand anderes. Nimm einen anderen.')
+  }
   return c
 }
 
