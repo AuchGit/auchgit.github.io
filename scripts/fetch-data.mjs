@@ -22,6 +22,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { download as wowTalents } from './wow-talents.mjs'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const OUT = path.join(ROOT, 'src', 'data', 'generated.json')
@@ -193,6 +194,13 @@ async function main() {
     icon: t.icon ? t.icon.replace(/^\//, '') : null, ...t.launcher,
   }))
   writeJson('api/catalog.json', { ...catalog, tools: launcherTools })
+
+  // WoW Forever talents (talentsforever.com, CC BY 4.0) for the talent calculator here and in
+  // the launcher: fresh every build. If the source is down, the copy in the code stays in use.
+  try {
+    const t = await wowTalents()
+    if (Object.keys(t.classes).length === 9) writeJson('api/wow-forever/talents.json', t)
+  } catch (e) { console.warn('wow talents:', e.message) }
 
   const news = [...games, ...tools, launcher]
     .flatMap(p => p.releases.map(r => ({ project: p.id, kind: p.kind, name: p.name, accent: p.accent, version: r.version, date: r.date, notes: r.notes })))

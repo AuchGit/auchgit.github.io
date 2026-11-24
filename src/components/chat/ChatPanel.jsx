@@ -4,6 +4,8 @@ import { useSocial } from './useSocial'
 import { useLauncher } from './shim'
 import { CallButtons, CallInChat } from './Call'
 import { LiveBanner, LiveCard } from './Live'
+import ToolCard from '../wow/ToolCard'
+import { toolLink } from '../wow/toolbox'
 import { useCall } from './useCall'
 import { api } from './shim'
 import { PersonAvatar, STATUS, ago, presenceStatus } from './Person'
@@ -389,6 +391,7 @@ export default function ChatPanel({ compact = false, convId = null, autoFocus = 
                         : m.kind === 'invite' ? <InviteCard m={m} mine={mine} who={who?.player_name} />
                         : m.payload?.call ? <CallCard m={m} mine={mine} />
                         : m.payload?.live ? <LiveCard m={m} mine={mine} />
+                        : m.payload?.tool || (m.kind === 'text' && toolLink(m.body)) ? <ToolCard m={m} mine={mine} />
                         : m.kind === 'media' ? <MediaMessage m={m} />
                         : emojiOnly(m.body) ? <div className={`leading-tight ${emojiOnly(m.body) === 1 ? 'text-[44px]' : 'text-[34px]'}`}>{m.body}</div>
                         : emotesOnly(m.body, messageEmotes(m.payload)) ? <BigEmotes body={m.body} own={messageEmotes(m.payload)} />
