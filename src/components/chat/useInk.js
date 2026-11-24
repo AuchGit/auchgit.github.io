@@ -11,9 +11,12 @@
 //   clear  everything on one screen (only its sharer)
 //   ask    someone new wants what's there; the sharer answers with `all`
 //   req    may I draw? (the sharer sees it, useCall `inkAsks` / `inkAnswer`); `no` if not
+//
+// The admin may always draw, without asking (who that is comes from the server).
 import { create } from 'zustand'
 import { callBus, useCall } from './useCall'
 import { useSocial } from './useSocial'
+import { supabase } from '../../lib/supabase'
 // small settings in this browser (same keys as the launcher)
 const PREFIX = 'auch.'
 const load = (k, d) => { try { const r = localStorage.getItem(PREFIX + k); return r == null ? d : JSON.parse(r) } catch { return d } }
@@ -33,11 +36,27 @@ const uid = () => Math.random().toString(36).slice(2, 10)
 export const inkOwner = s => s.slice(0, s.indexOf(':'))
 const screenOf = s => s.slice(s.indexOf(':') + 1)
 
-/** May `who` draw on screen `s`? Its sharer always, the others when the sharer lets them. */
+// Admins: social_admins leaves yourself out, beta_me says whether you are one. Asked once per login.
+let adminsFor = null
+function admins() {
+  const me = callBus.me()
+  if (me && adminsFor !== me && supabase) {
+    adminsFor = me
+    Promise.all([supabase.rpc('social_admins'), supabase.rpc('beta_me')]).then(([a, b]) => {
+      const ids = (a.data || []).map(x => x.user_id)
+      const row = Array.isArray(b.data) ? b.data[0] : b.data
+      if (row?.admin) ids.push(me)
+      useInk.setState({ admins: ids })
+    }, () => {})
+  }
+  return useInk.getState().admins
+}
+
+/** May `who` draw on screen `s`? Its sharer and the admin always, the others when the sharer lets them. */
 export function canInk(s, who, c = useCall.getState()) {
   if (!s || !who) return false
   const owner = inkOwner(s)
-  if (who === owner) return true
+  if (who === owner || admins().includes(who)) return true
   const id = screenOf(s)
   const entry = owner === callBus.me() ? c.myScreens.find(x => x.id === id) : c.members[owner]?.screens?.find(x => x.id === id)
   const ink = entry?.ink
@@ -90,12 +109,14 @@ const nativeDirty = new Set()
 
 export const useInk = create((set, get) => ({
   strokes: {},  // screen key "owner:streamId" -> [{ id, by, tool, color, size, fade, done, doneAt, pts }]
-  tool: { tool: 'pen', color: INK_COLORS[0], size: 1, fade: false, ...load('inkTool', {}) },
+  // fading is on until switched off by hand (`fadeSet`)
+  tool: (t => ({ tool: 'pen', color: INK_COLORS[0], size: 1, ...t, fade: t.fadeSet ? !!t.fade : true }))(load('inkTool', {})),
   drawOn: null, // the screen you paint on right now
   asked: {},    // screen -> when you asked to draw on it ('no': the sharer said no)
 
+  admins: [],   // user ids that may always draw
   setTool(patch) {
-    const tool = { ...get().tool, ...patch }
+    const tool = { ...get().tool, ...patch, ...('fade' in patch ? { fadeSet: true } : {}) }
     save('inkTool', tool)
     set({ tool })
   },

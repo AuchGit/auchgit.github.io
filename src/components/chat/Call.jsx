@@ -737,6 +737,7 @@ function CallTile({ t, pinned, small, full, lone = false }) {
   useEffect(() => { if (ref.current) ref.current.srcObject = t.stream || null }, [t.stream])
   const mirror = useCall(s => s.mirror)
   const solo = useCall(s => s.solo)
+  useInk(s => s.admins) // the admin list arrives a moment later: check again then
   const may = useCall(c => !!t.ink && !!t.stream && canInk(t.ink, callBus.me(), c))
   const drawing = useInk(s => !!t.ink && s.drawOn === t.ink)
   const inkLow = useInk(s => !!s.tool.low)
