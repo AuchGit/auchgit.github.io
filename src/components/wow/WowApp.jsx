@@ -3,7 +3,7 @@
 // your saved builds (with an account: the same list as in the launcher), sharing into a chat.
 // The address always holds the build (?b=…), so it can simply be copied.
 import { useEffect, useState } from 'react'
-import { Bookmark, BookmarkCheck, Check, Copy, Send, Trash2, X } from 'lucide-react'
+import { Bookmark, BookmarkCheck, Check, Copy, Pencil, Send, Trash2, X } from 'lucide-react'
 import Talents from './Talents'
 import Items from './Items'
 import { buildName, buildText, buildUrl, decode, emptyBuild, encode, loadTalents, talentsNow } from './wowTalents'
@@ -17,7 +17,7 @@ const KIND_COLOR = { build: '#8f82ff', item: '#a335ee', page: '#64748b' }
 
 function readUrl() {
   const p = new URLSearchParams(location.search)
-  if (p.get('b')) return { mode: 'talents', code: p.get('b') }
+  if (p.get('b')) return { mode: 'talents', code: p.get('b'), name: (p.get('n') || '').slice(0, 80) }
   if (p.get('item')) return { mode: 'items', item: Number(p.get('item')) || null }
   return { mode: 'talents', code: null }
 }
@@ -49,6 +49,8 @@ export default function WowApp() {
   const [first] = useState(readUrl)
   const [mode, setMode] = useState(first.mode)
   const [code, setCode] = useState(first.code)
+  const [name, setName] = useState(first.name || '')
+  const [renaming, setRenaming] = useState(null) // saved entry id
   const [item, setItem] = useState(first.item ? { id: first.item, name: null } : null)
   const [td, setTd] = useState(talentsNow)
   const [panel, setPanel] = useState(null) // 'saved' | { share: entry }
@@ -61,18 +63,20 @@ export default function WowApp() {
   const build = td ? (code && decode(td, code)) || emptyBuild(td, 'warrior') : null
   // the address always says what's shown
   useEffect(() => {
-    const q = mode === 'items' && item?.id ? `?item=${item.id}` : mode === 'talents' && build ? `?b=${encode(build)}` : ''
+    const q = mode === 'items' && item?.id ? `?item=${item.id}` : mode === 'talents' && build ? new URL(buildUrl(build, name)).search : ''
     if (location.search !== q) history.replaceState(null, '', location.pathname + q)
-  }, [mode, code, item?.id, td]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [mode, code, name, item?.id, td]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const here = mode === 'talents' && build ? { url: buildUrl(build), title: buildName(td, build), kind: 'build', cls: build.cls, box: BOX.id }
+  const here = mode === 'talents' && build ? { url: buildUrl(build, name), title: name.trim() || buildName(td, build), kind: 'build', cls: build.cls, box: BOX.id }
     : mode === 'items' && item?.id ? { url: itemUrl(item.id), title: item.name || itemNow(item.id)?.name || `Item ${item.id}`, kind: 'item', box: BOX.id } : null
   const kept = !!here && saves.some(x => x.url === here.url)
+  // narrow (phone): the list makes room for what was picked; wide: it stays
+  const fold = () => { if (innerWidth < 768) setPanel(null) }
   const open = s => {
     const b = buildText(s.url)
-    if (b) { setMode('talents'); setCode(b); setPanel(null); return }
+    if (b) { setMode('talents'); setCode(b); setName(s.title || ''); fold(); return }
     const id = itemIdOf(s.url)
-    if (id) { setMode('items'); setItem({ id, name: s.title }); setPanel(null); return }
+    if (id) { setMode('items'); setItem({ id, name: s.title }); fold(); return }
     window.open(s.url, '_blank', 'noopener')
   }
   const tab = (id, label) => (
@@ -97,7 +101,7 @@ export default function WowApp() {
         ))}
         <div className="mx-1 h-4 w-px bg-white/[0.08]" />
         <button className={btn} disabled={!here} title={kept ? 'Gemerkt' : mode === 'talents' ? 'Build merken' : 'Item merken'}
-          onClick={() => { if (here && !kept) useToolbox.getState().keep({ url: here.url, title: here.title }); setPanel('saved') }}>
+          onClick={() => { if (here && !kept) { const e = useToolbox.getState().keep({ url: here.url, title: here.title }); if (mode === 'talents' && !name.trim()) setName(e.title) } setPanel('saved') }}>
           {kept ? <BookmarkCheck size={15} className="text-brand-300" /> : <Bookmark size={15} />}
         </button>
         <button className={btn} disabled={!here} title="In einen Chat schicken" onClick={() => setPanel({ share: here })}><Send size={14} /></button>
@@ -110,11 +114,24 @@ export default function WowApp() {
           <aside className="w-64 shrink-0 overflow-y-auto border-r border-white/[0.06]">
             {panel.share ? <SharePick entry={panel.share} onDone={() => setPanel(null)} /> : (
               <div className="p-1.5">
-                {saves.map(s => (
+                {saves.map(s => renaming === s.id ? (
+                  <form key={s.id} className="flex h-8 items-center gap-1 px-1" onSubmit={e => {
+                    e.preventDefault()
+                    const title = new FormData(e.currentTarget).get('t')
+                    useToolbox.getState().update(s.id, { title })
+                    if (buildText(s.url) && buildText(s.url) === code) setName(String(title || '').trim())
+                    setRenaming(null)
+                  }}>
+                    <input name="t" autoFocus defaultValue={s.title} onKeyDown={e => e.key === 'Escape' && setRenaming(null)}
+                      className="h-7 min-w-0 flex-1 rounded-md bg-black/30 px-2 text-[13px] text-white outline-none" />
+                    <button className="grid h-7 w-7 place-items-center rounded-md text-ink-300 hover:bg-white/[0.08] hover:text-white" title="Fertig"><Check size={14} /></button>
+                  </form>
+                ) : (
                   <div key={s.id} className="group flex h-8 items-center gap-1.5 rounded-md pl-1 pr-0.5 hover:bg-white/[0.05]">
                     <span className="h-4 w-[3px] shrink-0 rounded-full" style={{ background: CLASSES[s.cls]?.color || KIND_COLOR[s.kind] || KIND_COLOR.page }} />
-                    <button onClick={() => open(s)} title={s.note || s.title} className="min-w-0 flex-1 truncate text-left text-[13px] text-ink-200">{s.title}</button>
+                    <button onClick={() => open(s)} onDoubleClick={() => setRenaming(s.id)} title={s.note || s.title} className="min-w-0 flex-1 truncate text-left text-[13px] text-ink-200">{s.title}</button>
                     <span className="shrink-0 text-[10.5px] text-ink-500 group-hover:hidden">{KIND_LABEL[s.kind]}</span>
+                    <button title="Umbenennen" onClick={() => setRenaming(s.id)} className="hidden h-6 w-6 place-items-center rounded-md text-ink-400 hover:text-white group-hover:grid"><Pencil size={12} /></button>
                     <button title="Teilen" onClick={() => setPanel({ share: s })} className="hidden h-6 w-6 place-items-center rounded-md text-ink-400 hover:text-white group-hover:grid"><Send size={12} /></button>
                     <button title="Löschen" onClick={() => useToolbox.getState().remove(s.id)} className="hidden h-6 w-6 place-items-center rounded-md text-ink-400 hover:text-rose-300 group-hover:grid"><Trash2 size={12} /></button>
                   </div>
@@ -125,7 +142,8 @@ export default function WowApp() {
           </aside>
         )}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {mode === 'talents' && <Talents build={build} onChange={b => setCode(encode(b))} />}
+          {mode === 'talents' && <Talents build={build} name={name} onName={setName}
+            onChange={b => { if (build && b.cls !== build.cls) setName(''); setCode(encode(b)) }} />}
           {mode === 'items' && <Items selected={item?.id || null} onSelect={(id, name) => setItem(id ? { id, name } : null)} onWeb={url => window.open(url, '_blank', 'noopener')} />}
         </div>
       </div>

@@ -8,7 +8,8 @@
 //
 // A build is { cls, ranks: [[rank per talent] per tree] }; as text "warrior/0505-32-" (per
 // tree its talents' ranks in grid order, trailing zeros left out), as a link
-// https://auchgit.github.io/wow/?b=warrior/0505-32 (website, launcher and overlay open it).
+// https://auchgit.github.io/wow/?b=warrior/0505-32&n=Furor%20Raid (website, launcher and overlay
+// open it; n = the build's own name, optional).
 export const SITE = 'https://auchgit.github.io'
 export const POINTS = 51
 const LIVE = `${SITE}/api/wow-forever/talents.json`
@@ -121,7 +122,13 @@ export function decode(d, text) {
   return b
 }
 
-export const buildUrl = b => `${SITE}/wow/?b=${encode(b)}`
+/** Our link for a build text (and its name). */
+export const codeUrl = (code, name) => `${SITE}/wow/?b=${code}${name?.trim() ? `&n=${encodeURIComponent(name.trim().slice(0, 80))}` : ''}`
+export const buildUrl = (b, name) => codeUrl(encode(b), name)
+/** The build's own name in one of our links ('' if none). */
+export function buildNameIn(url) {
+  try { return new URL(url).searchParams.get('n')?.trim().slice(0, 80) || '' } catch { return '' }
+}
 /** The build text in one of our links (or a bare "warrior/05-5"), else null. */
 export function buildText(url) {
   const s = String(url || '').trim()

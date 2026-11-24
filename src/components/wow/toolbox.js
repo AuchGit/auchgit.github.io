@@ -3,7 +3,7 @@
 // own saved builds, items and pages (store/useToolbox.js). First one: WoW Forever, with
 // Wowhead's pages for it (German under /forever/de/…).
 import { BookOpen, Database, Map as MapIcon, Newspaper, Scroll, Sparkles, Swords } from 'lucide-react'
-import { buildText } from './wowTalents'
+import { buildNameIn, buildText } from './wowTalents'
 
 const WH = 'https://www.wowhead.com/forever'
 
@@ -85,7 +85,7 @@ export function classify(url) {
 
 /** A good name from the page's title (Wowhead: "Name - Item - WoW Forever"), else from the address. */
 export function nameFor(url, title, info = classify(url)) {
-  if (info?.kind === 'build') return `${CLASSES[info.cls]?.name || 'Talent'}-Build`
+  if (info?.kind === 'build') return buildNameIn(url) || `${CLASSES[info.cls]?.name || 'Talent'}-Build`
   let t = String(title || '').replace(/^\[(.*)\]$/, '$1')
   t = t.replace(/\s+-\s+(Item|Gegenstand|Quest|NPC|Spell|Zauber|Zone|Gebiet|Object|Objekt|Faction|Fraktion|Guide)\s+-\s+.*$/i, '')
     .replace(/\s+-\s+(WoW Forever|Wowhead|World of Warcraft).*$/i, '').trim()

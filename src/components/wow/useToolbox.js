@@ -13,6 +13,7 @@ const save = (k, v) => { try { localStorage.setItem(PREFIX + k, JSON.stringify(v
 import { supabase } from '../../lib/supabase'
 import { useSocial } from '../chat/useSocial'
 import { classify, nameFor } from './toolbox'
+import { buildText, codeUrl } from './wowTalents'
 
 const KEY = 'toolboxSaves'
 const GONE = 'toolboxGone' // deleted here while the account couldn't be reached
@@ -41,12 +42,19 @@ export const useToolbox = create((set, get) => ({
   open(url) { set({ want: { url, n: Date.now() } }) },
   _put(saves) { saves = sorted(saves); save(KEY, saves); set({ saves }) },
 
-  /** Saves an address (the same one again: updated, not twice). Returns the entry. */
+  /**
+   * Saves an address (the same one again: updated, not twice). A build is the same entry when
+   * it has the same name and class (points changed) or the same points (name changed).
+   */
   keep({ url, title, note }) {
     const info = classify(url) || { box: null, kind: 'page' }
+    const code = buildText(url)
+    const cls = code?.split('/')[0]
     const old = get().saves.find(x => x.url === url)
+      || (code && title && get().saves.find(x => x.kind === 'build' && x.title === title && buildText(x.url)?.split('/')[0] === cls))
+      || (code && get().saves.find(x => buildText(x.url) === code))
     const entry = old
-      ? { ...old, ...(title ? { title } : {}), ...(note != null ? { note } : {}), at: Date.now(), synced: false }
+      ? { ...old, url, ...(title ? { title } : {}), ...(note != null ? { note } : {}), at: Date.now(), synced: false }
       : { id: newId(), box: info.box, kind: info.kind, cls: info.cls || null, title: (title || nameFor(url, '', info)).slice(0, 160), url, note: note || '', at: Date.now(), synced: false }
     get()._put([entry, ...get().saves.filter(x => x.id !== entry.id)])
     get()._up(entry)
@@ -56,6 +64,9 @@ export const useToolbox = create((set, get) => ({
     const old = get().saves.find(x => x.id === id)
     if (!old) return
     const entry = { ...old, ...patch, title: String(patch.title ?? old.title).trim().slice(0, 160) || old.title, at: Date.now(), synced: false }
+    // a renamed build: its link carries the new name too
+    const code = buildText(entry.url)
+    if (code && patch.title != null) entry.url = codeUrl(code, entry.title)
     get()._put(get().saves.map(x => (x.id === id ? entry : x)))
     get()._up(entry)
   },

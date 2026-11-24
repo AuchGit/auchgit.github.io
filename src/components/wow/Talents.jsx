@@ -9,6 +9,35 @@ import { POINTS, addAll, add, canAdd, emptyBuild, iconUrl, levelFor, loadTalents
 // how the last press came (a click doesn't always say, Safari): touch opens the talent with - and +
 let lastPointer = 'mouse'
 const GOLD = '#f5c451'
+
+// Sizes: a tree is 4 symbols wide and 7 high, gaps 0.2 of a symbol; around it 14 px (padding +
+// border) across and 40 px (name line + padding + border) down; trees 6 px apart; the area
+// around them 12 px. Three trees in a row: 13.8 s + 66 wide, 8.2 s + 52 high.
+const rowW = s => 13.8 * s + 66
+const rowH = s => 8.2 * s + 52
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v))
+/** Symbol size for an area: the three trees as big as fit next to each other; on a phone one under the other. */
+export function layoutFor(A, B) {
+  if (!A || !B) return { s: 34, stack: false }
+  const row = Math.min((A - 66) / 13.8, (B - 52) / 8.2)
+  if (row >= 26 || A >= 560) return { s: clamp(Math.floor(row * 10) / 10, 20, 76), stack: false }
+  return { s: clamp(Math.floor((A - 38) / 4.6), 24, 48), stack: true }
+}
+/**
+ * A window size where the three trees fill the area exactly (overlay window in talent mode).
+ * frame: the window's element, area: the trees' area inside it; lead 'w' keeps the width.
+ */
+export function talentsFit(frame, area, { w, h }, lead) {
+  if (!frame || !area) return { w, h }
+  const dw = frame.offsetWidth - area.clientWidth
+  const dh = frame.offsetHeight - area.clientHeight
+  if (lead === 'h') {
+    const s = clamp((h - dh - 52) / 8.2, 20, 76)
+    return { w: Math.round(rowW(s) + dw), h: Math.round(rowH(s) + dh) }
+  }
+  const s = clamp((w - dw - 66) / 13.8, 20, 76)
+  return { w: Math.round(rowW(s) + dw), h: Math.round(rowH(s) + dh) }
+}
 const GREEN = '#4ade80'
 
 function Tip({ d, b, at, box, touch, onStep, compact }) {
@@ -21,10 +50,18 @@ function Tip({ d, b, at, box, touch, onStep, compact }) {
   const why = whyNot(d, b, at.t, at.i)
   const W = compact ? 230 : 260
   // next to the talent, inside the calculator (the overlay only shows what's in its window)
-  const left = at.rect.right + 8 + W <= box.width ? at.rect.right + 8 : Math.max(4, at.rect.left - 8 - W)
-  const top = Math.max(4, Math.min(at.rect.top - 4, box.height - h - 4))
+  // beside the talent (right, else left); no room on either side: below it, else above it.
+  // Never on top of it: the talent would lose the mouse and the tip would flicker away.
+  let left, top
+  if (at.rect.right + 8 + W <= box.width) left = at.rect.right + 8
+  else if (at.rect.left - 8 - W >= 0) left = at.rect.left - 8 - W
+  if (left != null) top = Math.max(4, Math.min(at.rect.top - 4, box.height - h - 4))
+  else {
+    left = Math.max(4, Math.min(at.rect.left, box.width - W - 4))
+    top = at.rect.bottom + 6 + h <= box.height ? at.rect.bottom + 6 : Math.max(4, at.rect.top - 6 - h)
+  }
   return (
-    <div ref={ref} className="pointer-events-auto absolute z-20 rounded-lg border border-white/[0.1] bg-ink-950/[0.97] p-2 text-[11.5px] leading-snug shadow-lift"
+    <div ref={ref} className={`${touch ? 'pointer-events-auto' : 'pointer-events-none'} absolute z-20 rounded-lg border border-white/[0.1] bg-ink-950/[0.97] p-2 text-[11.5px] leading-snug shadow-lift`}
       style={{ left, top, width: W }} onPointerDown={e => e.stopPropagation()}>
       <div className="flex items-baseline gap-2">
         <span className="min-w-0 flex-1 font-semibold text-white">{x.n}</span>
@@ -82,6 +119,7 @@ function Tree({ d, b, t, s, gap, onCell, onHover, color }) {
           const r = b.ranks[t][i]
           const open = r > 0 || canAdd(d, b, t, i)
           const border = r === x.m ? GOLD : open ? GREEN : 'rgba(255,255,255,0.12)'
+          const fs = Math.round(clamp(s * 0.26, 9, 13))
           return (
             <button key={i} type="button" aria-label={`${x.n} ${r}/${x.m}`}
               onPointerDown={e => { lastPointer = e.pointerType }}
@@ -91,11 +129,11 @@ function Tree({ d, b, t, s, gap, onCell, onHover, color }) {
               onPointerLeave={e => e.pointerType === 'mouse' && onHover(null)}
               className="absolute rounded-md border-2 bg-black/40 transition-[border-color]"
               style={{ left: cx(x.c) - s / 2, top: cy(x.r) - s / 2, width: s, height: s, borderColor: border, opacity: r === 0 && !open ? 0.55 : 1 }}>
-              <img src={iconUrl(x.i, s > 40 ? 56 : 36)} alt="" draggable={false} loading="lazy"
+              <img src={iconUrl(x.i, s > 38 ? 56 : 36)} alt="" draggable={false} loading="lazy"
                 className={`h-full w-full rounded-[4px] ${r === 0 && !open ? 'grayscale' : ''}`} />
               {(r > 0 || open) && (
-                <span className="absolute -bottom-1.5 -right-1.5 rounded bg-ink-950 px-[3px] text-[9.5px] font-semibold leading-[13px] tabular-nums"
-                  style={{ color: r === x.m ? GOLD : GREEN }}>{r}/{x.m}</span>
+                <span className="absolute -bottom-1.5 -right-1.5 rounded bg-ink-950 px-[3px] font-semibold tabular-nums"
+                  style={{ color: r === x.m ? GOLD : GREEN, fontSize: fs, lineHeight: `${fs + 3}px` }}>{r}/{x.m}</span>
               )}
             </button>
           )
@@ -107,27 +145,36 @@ function Tree({ d, b, t, s, gap, onCell, onHover, color }) {
 
 /**
  * build: { cls, ranks } or null (then the first class, empty); onChange(newBuild).
- * compact: smaller symbols (overlay window).
+ * name / onName: the build's own name (shown in the field, goes into saved entries and links).
+ * compact: smaller header (overlay window); the symbols always grow with the room there is.
+ * areaRef: gets the trees' area (for talentsFit).
  */
-export default function Talents({ build, onChange, compact = false }) {
+export default function Talents({ build, onChange, name = '', onName, compact = false, areaRef }) {
   const [d, setD] = useState(talentsNow)
   const [tip, setTip] = useState(null) // { t, i, rect, touch }
   const root = useRef(null)
+  const area = useRef(null)
   const [box, setBox] = useState({ width: 600, height: 400 })
+  const [room, setRoom] = useState({ w: 0, h: 0 })
   useEffect(() => { if (!d) loadTalents().then(setD) }, [d])
   useLayoutEffect(() => {
-    if (!root.current) return undefined
-    const ro = new ResizeObserver(() => setBox({ width: root.current.clientWidth, height: root.current.clientHeight }))
+    if (!root.current || !area.current) return undefined
+    if (areaRef) areaRef.current = area.current
+    const ro = new ResizeObserver(() => {
+      setBox({ width: root.current.clientWidth, height: root.current.clientHeight })
+      setRoom({ w: area.current.clientWidth, h: area.current.clientHeight })
+    })
     ro.observe(root.current)
+    ro.observe(area.current)
     return () => ro.disconnect()
-  }, [d])
+  }, [d]) // eslint-disable-line react-hooks/exhaustive-deps
   if (!d) return <div className="grid h-full place-items-center text-ink-400"><Loader2 size={18} className="animate-spin" /></div>
 
   const b = build && d.classes[build.cls] ? build : emptyBuild(d, 'warrior')
   const cls = d.classes[b.cls]
   const color = CLASS_COLOR[b.cls] || '#8f82ff'
-  const s = compact ? 30 : 38
-  const gap = compact ? 6 : 8
+  const { s } = layoutFor(room.w, room.h)
+  const gap = s * 0.2
   const rectOf = el => {
     const a = el.getBoundingClientRect()
     const o = root.current.getBoundingClientRect()
@@ -156,6 +203,10 @@ export default function Talents({ build, onChange, compact = false }) {
             </button>
           ))}
         </div>
+        {onName && (
+          <input value={name} onChange={e => onName(e.target.value.slice(0, 80))} placeholder={`${cls.name}-Build benennen`} aria-label="Name des Builds"
+            className={`h-6 min-w-0 flex-1 rounded-md bg-white/[0.05] px-1.5 text-[12px] font-semibold text-white outline-none placeholder:font-normal placeholder:text-ink-500 focus:bg-white/[0.08] ${compact ? 'max-w-[9rem]' : 'max-w-[14rem]'}`} />
+        )}
         <div className="min-w-2 flex-1" />
         <span className="text-[12px] font-semibold" style={{ color }}>{cls.name}</span>
         <span className="text-[12px] tabular-nums text-ink-300" title="Punkte pro Baum">{b.ranks.map((_, t) => treePoints(b, t)).join(' / ')}</span>
@@ -164,7 +215,7 @@ export default function Talents({ build, onChange, compact = false }) {
         <button title="Alle Punkte raus" onClick={() => onChange(emptyBuild(d, b.cls))} disabled={!used}
           className="grid h-6 w-6 place-items-center rounded-md text-ink-400 hover:bg-white/[0.07] hover:text-white disabled:opacity-35"><RotateCcw size={13} /></button>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto p-1.5" onScroll={() => setTip(null)}>
+      <div ref={area} className="min-h-0 flex-1 overflow-auto p-1.5" onScroll={() => setTip(null)}>
         <div className="flex flex-wrap justify-center gap-1.5">
           {cls.trees.map((_, t) => (
             <Tree key={t} d={d} b={b} t={t} s={s} gap={gap} color={color} onCell={cell}
