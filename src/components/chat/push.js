@@ -120,6 +120,29 @@ useSocial.subscribe(s => {
   if (s.session !== undefined) lastUser = id
 })
 
+// The number on the app icon while the app runs: all unread messages (the service worker
+// keeps it while the app is closed). Opening a chat removes its notification.
+let lastBadge = -1
+let lastChat = null
+async function clearNotifications(conv) {
+  try {
+    const reg = await navigator.serviceWorker?.getRegistration('/')
+    const list = (await reg?.getNotifications({ tag: conv })) || []
+    list.forEach(x => x.close())
+  } catch { /* no worker */ }
+}
+useSocial.subscribe(s => {
+  if (typeof navigator === 'undefined') return
+  const n = s.session ? (s.convs || []).reduce((sum, c) => sum + (c.unread || 0), 0) : 0
+  if (n !== lastBadge && 'setAppBadge' in navigator) {
+    lastBadge = n
+    ;(n ? navigator.setAppBadge(n) : navigator.clearAppBadge()).catch(() => {})
+  }
+  const conv = s.chat?.convId || null
+  if (conv && conv !== lastChat) clearNotifications(conv)
+  lastChat = conv
+})
+
 // "Install" on Android / desktop Chrome: the page keeps the browser's offer (see the layouts).
 export const installOffer = () => window.__auchInstall || null
 export async function install() {

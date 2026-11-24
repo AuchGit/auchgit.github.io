@@ -4,7 +4,7 @@ import Nav from '../components/Nav.astro'
 import Footer from '../components/Footer.astro'
 import { site } from '../lib/site.js'
 
-const { title, description = site.intro, image = '/art/dissonance.jpg', accent = '#8f82ff', installable = false } = Astro.props
+const { title, description = site.intro, image = '/art/dissonance.jpg', accent = '#8f82ff', installable = true } = Astro.props
 const fullTitle = title ? `${title} · ${site.brand}` : site.brand
 const canonical = new URL(Astro.url.pathname, Astro.site)
 const ogImage = new URL(image, Astro.site)
