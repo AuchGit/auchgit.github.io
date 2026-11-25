@@ -6,10 +6,12 @@
 // row above it in that tree, a talent with a requirement needs that one at full rank, and a
 // point can only come out if everything above still holds.
 //
-// A build is { cls, ranks: [[rank per talent] per tree] }; as text "warrior/0505-32-" (per
-// tree its talents' ranks in grid order, trailing zeros left out), as a link
-// https://auchgit.github.io/wow/?b=warrior/0505-32&n=Furor%20Raid (website, launcher and overlay
-// open it; n = the build's own name, optional).
+// A build is { cls, ranks: [[rank per talent] per tree], order? }; as text "warrior/0505-32"
+// (per tree its talents' ranks in grid order, trailing zeros left out), plus the order the
+// points were clicked in after a dot ("warrior/0505-32.ABAB…": one sign per point = level 10,
+// 11, …), as a link https://auchgit.github.io/wow/?b=warrior/0505-32.ABAB&n=Furor%20Raid
+// (website, launcher and overlay open it; n = the build's own name, optional). Without the
+// order (older links) orderOf works one out.
 export const SITE = 'https://auchgit.github.io'
 export const POINTS = 51
 const LIVE = `${SITE}/api/wow-forever/talents.json`
@@ -79,23 +81,73 @@ export function canRemove(d, b, t, i) {
 }
 
 const change = (b, t, i, by) => ({ ...b, ranks: b.ranks.map((r, n) => (n === t ? r.map((v, j) => (j === i ? v + by : v)) : r)) })
-export const add = (d, b, t, i) => (canAdd(d, b, t, i) ? change(b, t, i, 1) : b)
-export const remove = (d, b, t, i) => (canRemove(d, b, t, i) ? change(b, t, i, -1) : b)
+// ranks only (for rule checks while placing points), the order stays as it is
+const put = (d, b, t, i) => (canAdd(d, b, t, i) ? change(b, t, i, 1) : b)
+
+/** The click order if the build has a complete one: [[tree, talent] per point], else null. */
+const ownOrder = b => (Array.isArray(b.order) && b.order.length && b.order.length === total(b) ? b.order : null)
+/** The order to work with: the clicked one, else the worked-out one. */
+const seq = (d, b) => ownOrder(b) || orderOf(d, b).map(s => [s.t, s.i])
+
+/**
+ * An order replayed through the rules: a point that isn't allowed yet at its place (a point
+ * below it came out) waits until it is, then comes right after.
+ */
+function fixOrder(d, cls, order) {
+  let cur = emptyBuild(d, cls)
+  const out = []
+  const wait = []
+  const drain = () => {
+    for (let k = 0; k < wait.length; k++) {
+      const [t, i] = wait[k]
+      if (!canAdd(d, cur, t, i)) continue
+      cur = put(d, cur, t, i)
+      out.push([t, i])
+      wait.splice(k, 1)
+      k = -1
+    }
+  }
+  for (const [t, i] of order) {
+    if (canAdd(d, cur, t, i)) { cur = put(d, cur, t, i); out.push([t, i]); drain() } else wait.push([t, i])
+  }
+  return out
+}
+
+/** A point (it goes to the end of the order). */
+export function add(d, b, t, i) {
+  if (!canAdd(d, b, t, i)) return b
+  return { ...change(b, t, i, 1), order: [...seq(d, b), [t, i]] }
+}
+/** A point out: the last one of this talent leaves the order. */
+export function remove(d, b, t, i) {
+  if (!canRemove(d, b, t, i)) return b
+  const order = [...seq(d, b)]
+  for (let k = order.length - 1; k >= 0; k--) if (order[k][0] === t && order[k][1] === i) { order.splice(k, 1); break }
+  return { ...change(b, t, i, -1), order: fixOrder(d, b.cls, order) }
+}
 /** As many points as fit (shift-click). */
 export function addAll(d, b, t, i) {
   let n = b
-  while (canAdd(d, n, t, i)) n = change(n, t, i, 1)
+  while (canAdd(d, n, t, i)) n = add(d, n, t, i)
   return n
 }
 /** All points of this talent out, if nothing above needs them. */
 export function removeAll(d, b, t, i) {
   let n = b
-  while (canRemove(d, n, t, i)) n = change(n, t, i, -1)
+  while (canRemove(d, n, t, i)) n = remove(d, n, t, i)
   return n
 }
+/** Forget the clicked order (the worked-out one counts again). */
+export const autoOrder = b => ({ cls: b.cls, ranks: b.ranks })
+
+// the order as text: one sign per point, tree * 21 + talent (up to 20 talents per tree)
+const SIGNS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'
+const PER = 21
 
 export function encode(b) {
-  return `${b.cls}/${b.ranks.map(r => r.join('').replace(/0+$/, '')).join('-').replace(/-+$/, '')}`
+  const ranks = `${b.cls}/${b.ranks.map(r => r.join('').replace(/0+$/, '')).join('-').replace(/-+$/, '')}`
+  const order = ownOrder(b)
+  return order ? `${ranks}.${order.map(([t, i]) => SIGNS[t * PER + i]).join('')}` : ranks
 }
 
 /**
@@ -103,7 +155,7 @@ export function encode(b) {
  * old code (talents changed since) gives the nearest valid build instead of nonsense.
  */
 export function decode(d, text) {
-  const m = String(text || '').trim().match(/^([a-z]+)\/([0-9-]*)$/i)
+  const m = String(text || '').trim().match(/^([a-z]+)\/([0-9-]*)(?:\.([A-Za-z0-9_-]*))?$/i)
   if (!m || !d.classes[m[1].toLowerCase()]) return null
   const cls = m[1].toLowerCase()
   const parts = m[2].split('-')
@@ -115,12 +167,30 @@ export function decode(d, text) {
       tree.talents.forEach((x, i) => {
         if (x.r !== row) return
         const want = Math.min(Number(parts[t]?.[i] || 0), x.m)
-        for (let k = 0; k < want; k++) b = add(d, b, t, i)
+        for (let k = 0; k < want; k++) b = put(d, b, t, i)
       })
     })
   }
+  // the clicked order: kept if it is exactly these points in an allowed order
+  if (m[3]) {
+    const order = []
+    for (const ch of m[3]) {
+      const v = SIGNS.indexOf(ch)
+      const t = Math.floor(v / PER)
+      const i = v % PER
+      if (v < 0 || !trees[t]?.talents[i]) return b
+      order.push([t, i])
+    }
+    const fixed = fixOrder(d, cls, order)
+    const counts = b.ranks.map(r => r.map(() => 0))
+    for (const [t, i] of fixed) counts[t][i]++
+    if (fixed.length === order.length && counts.every((r, t) => r.every((v, i) => v === b.ranks[t][i]))) b = { ...b, order: fixed }
+  }
   return b
 }
+
+/** A build as text (with or without the order). */
+export const BUILD_TEXT = /^[a-z]+\/[0-9-]*(\.[A-Za-z0-9_-]*)?$/i
 
 /** Our link for a build text (and its name). */
 export const codeUrl = (code, name) => `${SITE}/wow/?b=${code}${name?.trim() ? `&n=${encodeURIComponent(name.trim().slice(0, 80))}` : ''}`
@@ -132,7 +202,7 @@ export function buildNameIn(url) {
 /** The build text in one of our links (or a bare "warrior/05-5"), else null. */
 export function buildText(url) {
   const s = String(url || '').trim()
-  if (/^[a-z]+\/[0-9-]*$/i.test(s)) return s
+  if (BUILD_TEXT.test(s)) return s
   try {
     const u = new URL(s)
     const own = typeof location !== 'undefined' ? location.hostname : ''
@@ -165,8 +235,24 @@ export function orderOf(d, b) {
       if (open.length) { pick = { t, ...open[0] }; break }
     }
     if (!pick) break
-    cur = add(d, cur, pick.t, pick.i)
+    cur = put(d, cur, pick.t, pick.i)
     out.push({ t: pick.t, i: pick.i, r: pick.x.r, c: pick.x.c, n: pick.x.n })
   }
+  return out
+}
+
+/** The leveling order: as clicked in the calculator, else worked out (orderOf). Same shape. */
+export function orderFor(d, b) {
+  const own = ownOrder(b)
+  if (!own) return orderOf(d, b)
+  const trees = d.classes[b.cls].trees
+  return own.map(([t, i]) => { const x = trees[t].talents[i]; return { t, i, r: x.r, c: x.c, n: x.n } })
+}
+/** Is the order the one you clicked (not worked out)? */
+export const ownOrderIn = b => !!ownOrder(b)
+/** Per talent the levels its points come at: { "t:i": [10, 14] }. */
+export function levelsOf(d, b) {
+  const out = {}
+  orderFor(d, b).forEach((s, k) => { (out[s.t + ':' + s.i] ||= []).push(k + 10) })
   return out
 }

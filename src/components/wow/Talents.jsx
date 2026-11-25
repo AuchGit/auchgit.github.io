@@ -3,8 +3,12 @@
 // - and + instead. Hover shows its text (the data's English, see lib/wowTalents.js).
 // The website has a copy of this file (scripts/sync-web-toolbox.py).
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Loader2, Minus, Plus, RotateCcw } from 'lucide-react'
-import { POINTS, addAll, add, canAdd, emptyBuild, iconUrl, levelFor, loadTalents, remove, removeAll, talentsNow, total, treePoints, whyNot } from './wowTalents'
+import { ListOrdered, Loader2, Minus, Plus, RotateCcw } from 'lucide-react'
+import { POINTS, addAll, add, autoOrder, canAdd, emptyBuild, iconUrl, levelFor, levelsOf, loadTalents, orderFor, ownOrderIn, remove, removeAll, talentsNow, total, treePoints, whyNot } from './wowTalents'
+// small settings in this browser (same keys as the launcher)
+const PREFIX = 'auch.'
+const load = (k, d) => { try { const r = localStorage.getItem(PREFIX + k); return r == null ? d : JSON.parse(r) } catch { return d } }
+const save = (k, v) => { try { localStorage.setItem(PREFIX + k, JSON.stringify(v)) } catch { /* blocked */ } }
 
 // how the last press came (a click doesn't always say, Safari): touch opens the talent with - and +
 let lastPointer = 'mouse'
@@ -40,7 +44,7 @@ export function talentsFit(frame, area, { w, h }, lead) {
 }
 const GREEN = '#4ade80'
 
-function Tip({ d, b, at, box, touch, onStep, compact }) {
+function Tip({ d, b, at, box, touch, onStep, compact, levels }) {
   const ref = useRef(null)
   const [h, setH] = useState(0)
   useLayoutEffect(() => { if (ref.current) setH(ref.current.offsetHeight) })
@@ -73,6 +77,7 @@ function Tip({ d, b, at, box, touch, onStep, compact }) {
         <p className="mt-1 text-ink-300">{r > 0 && <span className="text-ink-400">Nächster Rang: </span>}{x.d[r]}</p>
       )}
       {why && why !== 'Voll' && <p className="mt-1 text-rose-300">{why}</p>}
+      {levels?.length > 0 && <p className="mt-1 text-[10.5px] text-brand-200">Stufe {levels.join(', ')}</p>}
       {touch ? (
         <div className="mt-1.5 flex justify-end gap-1">
           <button onClick={() => onStep(-1)} className="grid h-7 w-9 place-items-center rounded-md bg-white/[0.08] text-white"><Minus size={14} /></button>
@@ -144,7 +149,8 @@ function Tree({ d, b, t, s, gap, onCell, onHover, color }) {
 }
 
 /**
- * build: { cls, ranks } or null (then the first class, empty); onChange(newBuild).
+ * build: { cls, ranks, order? } or null (then the first class, empty); onChange(newBuild).
+ * The order the points are clicked in is the leveling order (shown on demand, goes into links).
  * name / onName: the build's own name (shown in the field, goes into saved entries and links).
  * compact: smaller header (overlay window); the symbols always grow with the room there is.
  * areaRef: gets the trees' area (for talentsFit).
@@ -152,6 +158,7 @@ function Tree({ d, b, t, s, gap, onCell, onHover, color }) {
 export default function Talents({ build, onChange, name = '', onName, compact = false, areaRef }) {
   const [d, setD] = useState(talentsNow)
   const [tip, setTip] = useState(null) // { t, i, rect, touch }
+  const [showOrder, setShowOrder] = useState(() => load('talentsOrder', false))
   const root = useRef(null)
   const area = useRef(null)
   const [box, setBox] = useState({ width: 600, height: 400 })
@@ -191,6 +198,10 @@ export default function Talents({ build, onChange, name = '', onName, compact = 
     if (next !== b) onChange(next)
   }
   const used = total(b)
+  const steps = orderFor(d, b)
+  const levels = levelsOf(d, b)
+  const own = ownOrderIn(b)
+  const toggleOrder = () => setShowOrder(v => { save('talentsOrder', !v); return !v })
   return (
     <div ref={root} className="relative flex h-full min-h-0 flex-col" onPointerDown={() => tip?.touch && setTip(null)}>
       <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b border-white/[0.06] px-1.5 py-1">
@@ -212,6 +223,8 @@ export default function Talents({ build, onChange, name = '', onName, compact = 
         <span className="text-[12px] tabular-nums text-ink-300" title="Punkte pro Baum">{b.ranks.map((_, t) => treePoints(b, t)).join(' / ')}</span>
         <span className={`text-[12px] tabular-nums ${used >= POINTS ? 'text-amber-300' : 'text-ink-200'}`}>{POINTS - used} übrig</span>
         <span className="text-[12px] tabular-nums text-ink-400">Stufe {levelFor(b) ?? '–'}</span>
+        <button title="Reihenfolge beim Leveln (so wie du klickst)" onClick={toggleOrder}
+          className={`grid h-6 w-6 place-items-center rounded-md hover:bg-white/[0.07] hover:text-white ${showOrder ? 'bg-white/[0.1] text-white' : 'text-ink-400'}`}><ListOrdered size={13} /></button>
         <button title="Alle Punkte raus" onClick={() => onChange(emptyBuild(d, b.cls))} disabled={!used}
           className="grid h-6 w-6 place-items-center rounded-md text-ink-400 hover:bg-white/[0.07] hover:text-white disabled:opacity-35"><RotateCcw size={13} /></button>
       </div>
@@ -223,10 +236,35 @@ export default function Talents({ build, onChange, name = '', onName, compact = 
           ))}
         </div>
       </div>
+      {showOrder && (
+        <div className="shrink-0 border-t border-white/[0.06] px-1.5 py-1">
+          <div className="mb-0.5 flex items-center gap-1.5 text-[10.5px] text-ink-500">
+            <span className="font-semibold uppercase tracking-wider">Reihenfolge</span>
+            <span className="min-w-0 flex-1 truncate">{!used ? 'Die Punkte kommen in der Reihenfolge, in der du klickst.' : own ? 'so wie geklickt, ab Stufe 10' : 'ausgerechnet: Hauptbaum zuerst, von oben nach unten'}</span>
+            {own && <button type="button" onClick={() => onChange(autoOrder(b))} title="Klick-Reihenfolge vergessen, ausgerechnete nehmen" className="shrink-0 rounded px-1 hover:bg-white/[0.07] hover:text-white">Automatisch</button>}
+          </div>
+          <div className="flex max-h-[4.6rem] flex-wrap gap-0.5 overflow-y-auto">
+            {(() => {
+              const seen = {}
+              return steps.map((st, k) => {
+                const x = cls.trees[st.t].talents[st.i]
+                const key = st.t + ':' + st.i
+                seen[key] = (seen[key] || 0) + 1
+                return (
+                  <div key={k} title={`Stufe ${k + 10}: ${x.n} ${seen[key]}/${x.m} (${cls.trees[st.t].name})`} className="relative h-6 w-6 shrink-0">
+                    <img src={iconUrl(x.i, 36)} alt="" draggable={false} loading="lazy" className="h-full w-full rounded-[3px]" />
+                    <span className="absolute bottom-0 right-0 rounded-tl bg-black/75 px-px text-[8.5px] font-semibold leading-[10px] tabular-nums text-ink-100">{k + 10}</span>
+                  </div>
+                )
+              })
+            })()}
+          </div>
+        </div>
+      )}
       <div className="shrink-0 truncate px-2 py-0.5 text-[10px] text-ink-500">
         Talente: <a href={d.link} target="_blank" rel="noreferrer" className="underline hover:text-ink-300">talentsforever.com</a> (CC BY 4.0), Stand {d.generated} · Texte englisch
       </div>
-      {tip && <Tip d={d} b={b} at={tip} box={box} touch={tip.touch} compact={compact} onStep={step} />}
+      {tip && <Tip d={d} b={b} at={tip} box={box} touch={tip.touch} compact={compact} onStep={step} levels={levels[tip.t + ':' + tip.i]} />}
     </div>
   )
 }
