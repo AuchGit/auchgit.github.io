@@ -1,0 +1,83 @@
+---
+import Base from '../../layouts/Base.astro'
+
+// The AuchAddOn, short: what it does in the game, in the launcher, how it talks to the launcher.
+const game = [
+  {
+    title: 'Questlog (L)',
+    tips: ['Alle Quests nach Zonen, mit Suche und den Zielen auf einen Blick.', 'Rechtsklick: verfolgen. Umschalt+Klick: in den Chat. Teilen und Abbrechen unten.', 'Kompakt wie der alte Questlog oder breit mit Text daneben. Größe: Strg+Mausrad.'],
+  },
+  {
+    title: 'Talent-Plan',
+    tips: ['Im Launcher einen Build klicken und merken: die Reihenfolge, in der du klickst, ist die Reihenfolge beim Leveln.', 'Im Talentfenster leuchtet der nächste Punkt, daneben steht, was danach kommt. Bei jedem neuen Punkt eine Zeile im Chat.', 'Welcher Build: /auch plan im Spiel oder im Launcher bei deinem Charakter.'],
+  },
+  {
+    title: 'Nachschlagen',
+    tips: ['Alt+W über einem Item, Zauber, NPC oder einer Quest: geht im Launcher auf, oder im Overlay über dem Spiel.', 'Alt+Klick auf Items (Chat, Taschen, Charakter) und Quests genauso.', 'Wowhead im Launcher-Look, ohne Werbung. Quests mit Karte, wo du hin musst.'],
+  },
+  {
+    title: 'Rest',
+    tips: ['/auch char bringt Talente und Ausrüstung in den Charakter-Planer.', 'Knopf an der Minikarte: Klick Questlog, Rechtsklick was an ist.'],
+  },
+]
+const launcher = [
+  ['Übersicht', 'WoW-Reiter im Launcher: Spielen, deine Charaktere mit Stufe, Gold, Quests und dem nächsten Talentpunkt. Beim Spielen live.'],
+  ['Toolbox', 'Talente, Items, Charakter-Planer, „Im Spiel“ (Questlog und Plan), Quests, Karten. Auch im Overlay.'],
+  ['Einstellungen → WoW', 'WoW-Ordner, Addon installieren (neue Versionen kommen von selbst) und welche Teile an sind.'],
+]
+const commands = [
+  ['/auch log', 'Questlog'],
+  ['/auch plan', 'Talent-Plan wählen'],
+  ['/auch char', 'Charakter in den Planer'],
+  ['/auch optionen', 'was an ist'],
+  ['/auch test', 'schickt eine Quest an den Launcher'],
+  ['/auch sync', 'deinen Stand neu schicken'],
+  ['/auch klassisch', 'L wieder für den Questlog des Spiels'],
+]
+---
+<Base title="AuchAddOn" description="Das WoW-Addon zum AuchLauncher: Questlog, Talent-Plan, nachschlagen ohne Alt+Tab">
+  <section class="mx-auto max-w-3xl px-5 pt-14 sm:px-8">
+    <a href="/wow/" class="text-sm text-ink-400 hover:text-white">← WoW Forever</a>
+    <h1 class="mt-3 font-display text-4xl font-bold tracking-tight"><span class="text-gradient">AuchAddOn</span></h1>
+    <p class="mt-3 text-lg text-ink-300">Das WoW-Addon zum AuchLauncher. Questlog, Talent-Plan und Nachschlagen, ohne aus dem Spiel raus.</p>
+
+    <div class="card mt-8 p-5 text-sm leading-relaxed">
+      <p class="font-semibold text-white">Installieren</p>
+      <p class="mt-1 text-ink-300">Im Launcher auf <b class="text-white">WoW</b>, dann „AuchAddOn installieren“ (oder Einstellungen → WoW). Neue Versionen kommen von selbst. In WoW einmal <code class="text-white">/reload</code>.</p>
+    </div>
+
+    <h2 class="mt-12 font-display text-2xl font-semibold">Im Spiel</h2>
+    <div class="mt-4 grid gap-4 sm:grid-cols-2">
+      {game.map(g => (
+        <article class="card p-5">
+          <h3 class="font-semibold text-white">{g.title}</h3>
+          <ul class="mt-2 space-y-1.5 text-sm leading-relaxed text-ink-300">
+            {g.tips.map(t => <li>{t}</li>)}
+          </ul>
+        </article>
+      ))}
+    </div>
+
+    <h2 class="mt-12 font-display text-2xl font-semibold">Im Launcher</h2>
+    <div class="card mt-4 divide-y divide-white/5">
+      {launcher.map(([t, x]) => (
+        <div class="flex gap-4 p-4 text-sm"><span class="w-40 shrink-0 font-semibold text-white">{t}</span><span class="text-ink-300">{x}</span></div>
+      ))}
+    </div>
+
+    <h2 class="mt-12 font-display text-2xl font-semibold">Wie kommt das zum Launcher?</h2>
+    <div class="card mt-4 space-y-3 p-5 text-sm leading-relaxed text-ink-300">
+      <p>WoW lässt Addons mit nichts außerhalb des Spiels reden: kein Internet, keine Zwischenablage, keine Dateien während du spielst. Darum zwei Wege.</p>
+      <p><b class="text-white">Ins Spiel:</b> Der Launcher legt eine Datei mit deinen Builds ins Addon. WoW liest sie beim Einloggen oder nach <code class="text-white">/reload</code>.</p>
+      <p><b class="text-white">Aus dem Spiel:</b> Das Addon zeigt kurz einen fast schwarzen Streifen, 2 Pixel hoch, ganz oben links. Den liest nur der Launcher, nur solange WoW vorne ist, und nur diese paar Pixel. Am Spiel wird nichts verändert, kein Eingriff ins Programm.</p>
+      <p>Wer das nicht will: „Direkt zum Launcher“ ausschalten. Dann geht Alt+Klick über ein Feld zum Kopieren (Strg+C).</p>
+    </div>
+
+    <h2 class="mt-12 font-display text-2xl font-semibold">Befehle</h2>
+    <div class="card mt-4 grid gap-x-6 gap-y-2 p-5 text-sm sm:grid-cols-2">
+      {commands.map(([c, x]) => <div><code class="text-white">{c}</code> <span class="text-ink-400">{x}</span></div>)}
+    </div>
+
+    <p class="mt-12 pb-16 text-sm text-ink-500">Kommt noch: mehr vom Interface (AuchUI), jedes Teil im Launcher an- und ausschaltbar.</p>
+  </section>
+</Base>
