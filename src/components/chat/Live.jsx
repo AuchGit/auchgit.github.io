@@ -423,6 +423,26 @@ export function LiveHost() {
   )
 }
 
+/** Over a black picture while the connection doesn't come: first "Verbinde …", after a while
+ * (or when it failed) what's likely wrong and a button to try again. */
+function Weak({ w }) {
+  const [long, setLong] = useState(false)
+  useEffect(() => { setLong(false); const t = setTimeout(() => setLong(true), 12000); return () => clearTimeout(t) }, [w.host, w.state === 'failed'])
+  const stuck = long || w.state === 'failed'
+  return (
+    <div className="absolute inset-0 grid place-items-center bg-black/60 p-3 text-center text-[12px] text-ink-300">
+      {stuck ? (
+        <div className="max-w-[16rem] space-y-1.5">
+          <p className="text-ink-100">Die Verbindung kommt nicht durch.</p>
+          <p className="text-[11.5px] text-ink-400">Oft schwaches Netz oder ein VPN, bei dir oder bei {w.name}.</p>
+          <button type="button" onClick={async () => { const s = useLive.getState(); const host = w.host, want = w.want; s.unwatch(); await s.watch(host, want) }}
+            className="inline-flex h-7 items-center gap-1.5 rounded-md bg-white/[0.1] px-2.5 text-[12px] text-white hover:bg-white/[0.16]"><RefreshCw size={12} /> Neu verbinden</button>
+        </div>
+      ) : <span className="flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Verbinde …</span>}
+    </div>
+  )
+}
+
 export function LiveWatch() {
   const w = useLive(s => s.watching)
   const stream = useLive(s => s.stream)
@@ -451,8 +471,12 @@ export function LiveWatch() {
         <button onClick={() => useLive.getState().unwatch()} title="Raus" className={btn}><X size={15} /></button>
       </div>
       {showVideo
-        ? <Video stream={stream} className="aspect-video w-full shrink-0 bg-black object-contain" />
-        : (
+        ? (
+          <div className="relative shrink-0">
+            <Video stream={stream} className="aspect-video w-full bg-black object-contain" />
+            {connecting && <Weak w={w} />}
+          </div>
+        ) : (
           <div className="mx-3 grid h-24 shrink-0 place-items-center rounded-xl bg-white/[0.03]">
             {connecting ? <span className="flex items-center gap-2 text-[12px] text-ink-400"><Loader2 size={14} className="animate-spin" /> Verbinde …</span>
               : <span className="flex items-end gap-1">{[0, 1, 2, 3, 4].map(i => <span key={i} className="w-1.5 animate-pulse rounded-full bg-rose-400" style={{ height: 10 + ((i * 7) % 18), animationDelay: `${i * 140}ms` }} />)}</span>}
