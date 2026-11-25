@@ -8,6 +8,7 @@ import { Clock, FlaskConical, Gamepad2, ImageOff, MessageCircle, MessagesSquare,
 import { supabase, germanError } from '../../lib/supabase.js'
 import { games } from '../../lib/site.js'
 import { Avatar, Notice, Spinner } from './ui.jsx'
+import ProfileChars from '../wow/ProfileChars.jsx'
 
 const LINKS = [
   { key: 'discord', label: 'Discord' },
@@ -158,6 +159,8 @@ export default function ProfilePage() {
               )}
             </section>
           </div>
+
+          <ProfileChars userId={uid} own={own} className="card p-6" />
 
           <section className="card p-6">
             <div className="text-sm font-semibold text-ink-200">Spielzeit</div>

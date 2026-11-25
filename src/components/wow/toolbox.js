@@ -31,7 +31,7 @@ export const BOXES = [{
     { id: 'items', name: 'Items', own: 'items', url: `${WH}/items`, Icon: Swords, match: /^\/(items|item=)/ },
     { id: 'gear', name: 'Charakter', own: 'gear', url: `${WH}/items`, Icon: Shield, match: /^$/ },
     // what the AuchAddOn brought from the game (desktop app: components/toolbox/Game.jsx)
-    { id: 'game', name: 'Im Spiel', own: 'game', desktop: true, url: `${WH}/quests`, Icon: Gamepad2, match: /(?!)/ },
+    { id: 'game', name: 'Charaktere', own: 'game', desktop: true, url: `${WH}/quests`, Icon: Gamepad2, match: /(?!)/ },
     { id: 'quests', name: 'Quests', url: `${WH}/quests`, Icon: Scroll, match: /^\/(quests|quest=)/ },
     { id: 'maps', name: 'Karten', url: `${WH}/maps`, Icon: MapIcon, match: /^\/(maps?|zone=)/ },
     { id: 'db', name: 'Datenbank', url: `${WH}/database`, Icon: Database, match: /^\/(database|npcs?|npc=|spells?|spell=|objects?|object=)/ },

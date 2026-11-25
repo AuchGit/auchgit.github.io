@@ -5,6 +5,7 @@ import { useLauncher } from './shim'
 import { api } from './shim'
 import { Modal } from './shim'
 import { PersonAvatar, ago, presenceStatus } from './Person'
+import ProfileChars from '../wow/ProfileChars'
 
 // The same fields the website's profile editor offers.
 const LINKS = [
@@ -129,6 +130,8 @@ export function ProfileModal({ userId }) {
       {relation === 'friend' && !person.about && !links.length && (
         <p className="mt-5 text-center text-[12.5px] text-ink-500">Noch nix über sich geschrieben.</p>
       )}
+
+      {relation === 'friend' && <ProfileChars userId={person.user_id} compact className="mt-4 rounded-xl bg-white/[0.03] p-3" />}
 
       <a href={`/profil/?id=${person.user_id}`} className="mt-4 block rounded-xl py-2 text-center text-[12.5px] text-ink-300 hover:bg-white/[0.05] hover:text-white">Ganzes Profil mit Spielzeit &rarr;</a>
 

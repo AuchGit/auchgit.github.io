@@ -13,7 +13,7 @@ const KIND_COLOR = { build: '#8f82ff', item: '#a335ee', page: '#64748b' }
 const colorOf = s => CLASSES[s.cls]?.color || KIND_COLOR[s.kind] || KIND_COLOR.page
 const btn = 'grid h-6 w-6 shrink-0 place-items-center rounded-md text-ink-400 hover:bg-white/[0.08] hover:text-white'
 
-export function SharePick({ entry, onDone, big = false }) {
+export function SharePick({ entry, onDone, big = false, send = null }) {
   const session = useSocial(s => s.session)
   const friends = useSocial(s => s.friends)
   const admins = useSocial(s => s.admins) || []
@@ -31,7 +31,10 @@ export function SharePick({ entry, onDone, big = false }) {
   const groups = convs.filter(c => c.kind === 'group' && match(c.title))
   async function to(key, target, name) {
     setError(null)
-    try { await useToolbox.getState().shareTo(entry, target); setSent({ key, name }); setTimeout(onDone, 900) } catch (e) { setError(e.message) }
+    try {
+      if (send) await send(target); else await useToolbox.getState().shareTo(entry, target)
+      setSent({ key, name }); setTimeout(onDone, 900)
+    } catch (e) { setError(e.message) }
   }
   const row = `flex ${big ? 'h-8 text-[13px]' : 'h-7 text-[12px]'} w-full items-center gap-1.5 rounded-md px-1.5 text-left text-ink-200 hover:bg-white/[0.07] disabled:opacity-50`
   return (
