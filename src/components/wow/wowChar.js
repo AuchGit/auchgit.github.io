@@ -30,10 +30,29 @@ export function itemList(text) {
   return String(text || '').split(' ').map(x => { const [id, n] = x.split(':'); return { id: Number(id), n: Number(n) || 1 } }).filter(x => x.id > 0)
 }
 
-/** Recipes of one profession ("id:name;…", negative id = a spell like an enchant) -> [{ id, n }]. */
+/**
+ * Recipes of one profession -> [{ id, n, d, cat }]. Text: "#Category;id:name:d;…" (negative id =
+ * a spell like an enchant; d = how it still raises the skill: o orange, m yellow, e green,
+ * t gray; AuchAddOn up to 1.6 sent only "id:name", without categories).
+ */
 export function recipeList(text) {
-  return String(text || '').split(';').map(x => { const k = x.indexOf(':'); return k > 0 ? { id: Number(x.slice(0, k)) || 0, n: x.slice(k + 1) } : null }).filter(x => x && x.n)
+  const out = []
+  let cat = ''
+  for (const x of String(text || '').split(';')) {
+    if (x[0] === '#') { cat = x.slice(1).trim(); continue }
+    const k = x.indexOf(':')
+    if (k <= 0) continue
+    let n = x.slice(k + 1)
+    let d = ''
+    const m = n.match(/^(.*):([omet])$/)
+    if (m) { n = m[1]; d = m[2] }
+    if (n) out.push({ id: Number(x.slice(0, k)) || 0, n, d, cat })
+  }
+  return out
 }
+
+/** The game's colors for how a recipe still raises the skill. */
+export const DIFFS = { o: ['Orange', '#ff8040', 'steigt sicher'], m: ['Gelb', '#ffd23f', 'steigt meistens'], e: ['Grün', '#40c040', 'steigt selten'], t: ['Grau', '#9a9a9a', 'steigt nicht mehr'] }
 
 /** Gold, silver, copper from copper. */
 export function coins(c) {

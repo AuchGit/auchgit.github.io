@@ -4,8 +4,8 @@
 // (the website has a copy: scripts/sync-web-toolbox.py). Items with Wowhead's tooltips.
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { ChevronDown, ChevronLeft, Shield, Sparkles, Wand2 } from 'lucide-react'
-import { AUCTION_LEFT, STANDINGS, coins, hoursText, itemList, nameOf, questColor, recipeList, restedNow, treePoints } from './wowChar'
+import { ChevronDown, ChevronLeft, ChevronsDownUp, ChevronsUpDown, Search, Shield, Sparkles, Wand2, X } from 'lucide-react'
+import { AUCTION_LEFT, DIFFS, STANDINGS, coins, hoursText, itemList, nameOf, questColor, recipeList, restedNow, treePoints } from './wowChar'
 import { SLOTS, itemTip, tipNow } from './wowGear'
 import { CLASSES } from './toolbox'
 import { QUALITY } from './wowItems'
@@ -160,51 +160,136 @@ function Auctions({ p, lang }) {
   )
 }
 
-/** A profession: its bar, and everything it can make (from the game's profession window). */
-function Profession({ prof, recipes, lang }) {
+/** Does a recipe pass the search and the filters? */
+function passes(r, q, diffs, kind) {
+  if (q && !r.n.toLowerCase().includes(q) && !r.cat.toLowerCase().includes(q)) return false
+  if (diffs.length && !diffs.includes(r.d)) return false
+  if (kind === 'item' && !(r.id > 0)) return false
+  if (kind === 'spell' && !(r.id < 0)) return false
+  return true
+}
+
+function Recipe({ r, it, lang, setTip }) {
+  const url = r.id > 0 ? `${WH(lang)}/item=${r.id}` : r.id < 0 ? `${WH(lang)}/spell=${-r.id}` : null
+  const diff = DIFFS[r.d]
+  return (
+    <a href={url || undefined} target="_blank" rel="noreferrer" {...(r.id > 0 ? hoverTip(setTip, r.id, r.n) : {})}
+      className="flex h-7 items-center gap-1.5 rounded-md px-1 hover:bg-white/[0.05]">
+      <span className="h-4 w-[3px] shrink-0 rounded-full" style={{ background: diff ? diff[1] : 'transparent' }} title={diff ? `${diff[0]}: ${diff[2]}` : undefined} />
+      {r.id > 0 ? <img src={ICON(it?.icon)} alt="" className="h-5 w-5 shrink-0 rounded border" style={{ borderColor: it ? qColor(it) : 'rgba(255,255,255,.12)' }} loading="lazy" />
+        : <span className="grid h-5 w-5 shrink-0 place-items-center rounded border border-white/10 text-brand-300"><Wand2 size={11} /></span>}
+      <span className="min-w-0 flex-1 truncate text-[12px]" style={it ? { color: qColor(it) } : undefined}>{r.n}</span>
+    </a>
+  )
+}
+
+/** A profession: its bar, and everything it can make by category (from the game's profession window). */
+function Profession({ prof, recipes, lang, filter, fold }) {
   const [open, setOpen] = useState(false)
+  const [shut, setShut] = useState(() => new Set())
   const [tip, setTip] = useState(null)
   const list = recipes || []
-  const items = useTips(open ? list.filter(r => r.id > 0).map(r => r.id) : [], lang)
+  const active = !!(filter.q || filter.diffs.length || filter.kind !== 'all')
+  const shown = active ? list.filter(r => passes(r, filter.q, filter.diffs, filter.kind)) : list
+  const isOpen = open || (active && shown.length > 0)
+  const items = useTips(isOpen ? shown.filter(r => r.id > 0).map(r => r.id) : [], lang)
   const byId = {}
-  list.filter(r => r.id > 0).forEach((r, k) => { byId[r.id] = items[k] })
+  shown.filter(r => r.id > 0).forEach((r, k) => { byId[r.id] = items[k] })
+  // all categories open or shut from above
+  useEffect(() => {
+    if (!fold) return
+    setShut(fold.shut ? new Set(list.map(r => r.cat)) : new Set())
+    if (!fold.shut) setOpen(true)
+  }, [fold]) // eslint-disable-line react-hooks/exhaustive-deps
+  const cats = []
+  for (const r of shown) {
+    let c = cats.find(x => x.name === r.cat)
+    if (!c) cats.push(c = { name: r.cat, list: [] })
+    c.list.push(r)
+  }
+  const flat = cats.length === 1 && !cats[0].name
+  const toggle = name => setShut(s => { const n = new Set(s); if (n.has(name)) n.delete(name); else n.add(name); return n })
   return (
-    <div className="rounded-lg bg-white/[0.025] px-2 py-1.5">
+    <div className={`rounded-lg bg-white/[0.025] px-2 py-1.5 ${active && !shown.length ? 'opacity-50' : ''}`}>
       <button type="button" onClick={() => setOpen(v => !v)} className="flex w-full items-baseline gap-2 text-left text-[12.5px]">
-        <ChevronDown size={13} className={`shrink-0 self-center text-ink-500 transition-transform ${open ? '' : '-rotate-90'}`} />
+        <ChevronDown size={13} className={`shrink-0 self-center text-ink-500 transition-transform ${isOpen ? '' : '-rotate-90'}`} />
         <span className="min-w-0 flex-1 truncate font-semibold text-ink-100">{prof.n}</span>
-        <span className="shrink-0 text-[11px] text-ink-400">{list.length ? `${list.length} Rezepte` : ''}</span>
+        <span className="shrink-0 text-[11px] text-ink-400">{list.length ? (active ? `${shown.length} von ${list.length}` : `${list.length} Rezepte`) : ''}</span>
         <span className="shrink-0 tabular-nums text-[11.5px] text-ink-300">{prof.r}/{prof.m}</span>
       </button>
       <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-white/[0.07]">
         <div className="h-full rounded-full bg-gradient-to-r from-brand-400 to-rose-400" style={{ width: `${prof.m > 0 ? Math.min(100, (prof.r / prof.m) * 100) : 0}%` }} />
       </div>
-      {open && (
-        list.length ? (
-          <div className="mt-1.5 grid grid-cols-1 gap-x-3 sm:grid-cols-2">
-            {list.map((r, k) => {
-              const it = r.id > 0 ? byId[r.id] : null
-              const url = r.id > 0 ? `${WH(lang)}/item=${r.id}` : r.id < 0 ? `${WH(lang)}/spell=${-r.id}` : null
-              return (
-                <a key={k} href={url || undefined} target="_blank" rel="noreferrer" {...(r.id > 0 ? hoverTip(setTip, r.id, r.n) : {})}
-                  className="flex h-7 items-center gap-1.5 rounded-md px-1 hover:bg-white/[0.05]">
-                  {r.id > 0 ? <img src={ICON(it?.icon)} alt="" className="h-5 w-5 shrink-0 rounded border" style={{ borderColor: it ? qColor(it) : 'rgba(255,255,255,.12)' }} loading="lazy" />
-                    : <span className="grid h-5 w-5 shrink-0 place-items-center rounded border border-white/10 text-brand-300"><Wand2 size={11} /></span>}
-                  <span className="min-w-0 flex-1 truncate text-[12px]" style={it ? { color: qColor(it) } : undefined}>{r.n}</span>
-                </a>
-              )
-            })}
-          </div>
-        ) : <p className="mt-1 text-[11.5px] text-ink-500">Rezepte kommen, sobald du im Spiel das Berufsfenster einmal öffnest.</p>
+      {isOpen && (
+        !list.length ? <p className="mt-1 text-[11.5px] text-ink-500">Rezepte kommen, sobald du im Spiel das Berufsfenster einmal öffnest.</p>
+          : !shown.length ? <p className="mt-1 text-[11.5px] text-ink-500">Nichts passt.</p>
+            : (
+              <div className="mt-1 space-y-0.5">
+                {cats.map(c => {
+                  const closed = !flat && !active && shut.has(c.name)
+                  return (
+                    <div key={c.name || '-'}>
+                      {!flat && (
+                        <button type="button" onClick={() => toggle(c.name)} className="flex h-6 w-full items-center gap-1.5 rounded px-1 text-left text-[11.5px] hover:bg-white/[0.04]">
+                          <ChevronDown size={12} className={`shrink-0 text-ink-500 transition-transform ${closed ? '-rotate-90' : ''}`} />
+                          <span className="min-w-0 flex-1 truncate font-semibold text-brand-200">{c.name || 'Sonstiges'}</span>
+                          <span className="shrink-0 tabular-nums text-[10.5px] text-ink-500">{c.list.length}</span>
+                        </button>
+                      )}
+                      {!closed && (
+                        <div className={`grid grid-cols-1 gap-x-3 sm:grid-cols-2 ${flat ? '' : 'pl-3'}`}>
+                          {c.list.map((r, k) => <Recipe key={k} r={r} it={r.id > 0 ? byId[r.id] : null} lang={lang} setTip={setTip} />)}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )
       )}
       <Tip tip={tip} lang={lang} />
     </div>
   )
 }
 
+const KINDS = [['all', 'Alle'], ['item', 'Items'], ['spell', 'Verzauberungen']]
+
 function Professions({ p, lang }) {
+  const [q, setQ] = useState('')
+  const [diffs, setDiffs] = useState([])
+  const [kind, setKind] = useState('all')
+  const [fold, setFold] = useState(null)
   if (!p.profs?.length) return <p className="px-1 text-[12px] text-ink-500">Keine Berufe.</p>
-  return <div className="space-y-1.5">{p.profs.map(x => <Profession key={x.n} prof={x} recipes={recipeList(p.recipes?.[x.n])} lang={lang} />)}</div>
+  const lists = p.profs.map(x => recipeList(p.recipes?.[x.n]))
+  const any = lists.some(l => l.length)
+  const hasDiff = lists.some(l => l.some(r => r.d))
+  const hasSpell = lists.some(l => l.some(r => r.id < 0))
+  const filter = { q: q.trim().toLowerCase(), diffs, kind }
+  const chip = on => `flex h-6 items-center gap-1 rounded-md px-1.5 text-[11px] ${on ? 'bg-white/[0.12] text-white' : 'text-ink-400 hover:bg-white/[0.06] hover:text-ink-200'}`
+  return (
+    <div className="space-y-1.5">
+      {any && (
+        <div className="flex flex-wrap items-center gap-1">
+          <label className="flex h-6 min-w-[10rem] flex-1 items-center gap-1 rounded-md bg-white/[0.05] px-1.5 focus-within:bg-white/[0.09]">
+            <Search size={12} className="shrink-0 text-ink-500" />
+            <input value={q} onChange={e => setQ(e.target.value)} placeholder="Rezept oder Kategorie suchen …"
+              className="min-w-0 flex-1 bg-transparent text-[12px] text-ink-100 outline-none placeholder:text-ink-500" />
+            {q && <button type="button" onClick={() => setQ('')} className="text-ink-500 hover:text-white" title="Leeren"><X size={12} /></button>}
+          </label>
+          {hasDiff && Object.entries(DIFFS).map(([k, [name, color, what]]) => (
+            <button key={k} type="button" title={`${name}: ${what}`} className={chip(diffs.includes(k))}
+              onClick={() => setDiffs(d => d.includes(k) ? d.filter(x => x !== k) : [...d, k])}>
+              <span className="h-2 w-2 rounded-full" style={{ background: color }} />{name}
+            </button>
+          ))}
+          {hasSpell && KINDS.map(([k, name]) => <button key={k} type="button" className={chip(kind === k)} onClick={() => setKind(k)}>{name}</button>)}
+          <button type="button" title="Alle Kategorien auf" className={chip(false)} onClick={() => setFold({ shut: false })}><ChevronsUpDown size={12} /></button>
+          <button type="button" title="Alle Kategorien zu" className={chip(false)} onClick={() => setFold({ shut: true })}><ChevronsDownUp size={12} /></button>
+        </div>
+      )}
+      {p.profs.map((x, k) => <Profession key={x.n} prof={x} recipes={lists[k]} lang={lang} filter={filter} fold={fold} />)}
+    </div>
+  )
 }
 
 /** The character's talents in the trees (read only). */
