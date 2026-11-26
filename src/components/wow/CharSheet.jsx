@@ -3,12 +3,15 @@
 // quests. Yours in the launcher's "Charaktere", friends' on their profile, also in the app
 // (the website has a copy: scripts/sync-web-toolbox.py). Items with Wowhead's tooltips.
 import { useEffect, useState } from 'react'
-import { Shield, Sparkles } from 'lucide-react'
-import { AUCTION_LEFT, STANDINGS, coins, hoursText, itemList, questColor, restedNow, treePoints } from './wowChar'
+import { createPortal } from 'react-dom'
+import { ChevronDown, ChevronLeft, Shield, Sparkles, Wand2 } from 'lucide-react'
+import { AUCTION_LEFT, STANDINGS, coins, hoursText, itemList, nameOf, questColor, recipeList, restedNow, treePoints } from './wowChar'
 import { SLOTS, itemTip, tipNow } from './wowGear'
 import { CLASSES } from './toolbox'
 import { QUALITY } from './wowItems'
+import { decode, loadTalents, talentsNow } from './wowTalents'
 import { TipBox } from './Gear'
+import Talents from './Talents'
 
 const ICON = name => `https://render.worldofwarcraft.com/eu/icons/56/${name || 'inv_misc_questionmark'}.jpg`
 const qColor = it => QUALITY[it?.quality] || QUALITY.COMMON
@@ -45,15 +48,30 @@ function useTips(ids, lang) {
   return ids.map(id => (id ? tipNow(id, lang) : null))
 }
 
-function Tip({ tip }) {
-  if (!tip?.item) return null
-  const left = Math.min(tip.x + 14, (typeof window !== 'undefined' ? window.innerWidth : 1200) - 290)
-  return (
-    <div className="pointer-events-none fixed z-[80] w-[17rem] rounded-lg border border-white/10 bg-ink-950/95 p-2 shadow-lift" style={{ left, top: tip.y + 12 }}>
-      <TipBox item={tip.item} />
-    </div>
-  )
+function Tip({ tip, lang = 'de' }) {
+  const [, tick] = useState(0)
+  const id = tip?.id
+  useEffect(() => {
+    if (!id || tipNow(id, lang)) return undefined
+    let gone = false
+    itemTip(id, lang).then(() => !gone && tick(n => n + 1), () => {})
+    return () => { gone = true }
+  }, [id, lang])
+  const item = id ? tipNow(id, lang) : null
+  if (!tip || typeof document === 'undefined') return null
+  const W = window.innerWidth, H = window.innerHeight
+  const left = tip.x + 16 + 280 > W ? tip.x - 296 : tip.x + 16
+  const top = Math.min(tip.y + 14, H - 220)
+  return createPortal(
+    <div className="pointer-events-none fixed z-[2000] w-[17.5rem] rounded-lg border border-white/10 bg-ink-950/95 p-2 shadow-lift" style={{ left: Math.max(4, left), top: Math.max(4, top) }}>
+      {item ? <TipBox item={item} /> : <div className="text-[12px] text-ink-400">{tip.name || 'Lädt …'}</div>}
+    </div>, document.body)
 }
+const hoverTip = (setTip, id, name) => ({
+  onPointerEnter: e => setTip({ id, name, x: e.clientX, y: e.clientY }),
+  onPointerMove: e => setTip(t => t && { ...t, x: e.clientX, y: e.clientY }),
+  onPointerLeave: () => setTip(null),
+})
 
 function ItemGrid({ list, lang, empty }) {
   const items = useTips(list.map(x => x.id), lang)
@@ -62,14 +80,13 @@ function ItemGrid({ list, lang, empty }) {
   return (
     <div className="flex flex-wrap gap-1">
       {list.map((x, i) => (
-        <a key={x.id + ':' + i} href={`${WH(lang)}/item=${x.id}`} target="_blank" rel="noreferrer"
-          onPointerEnter={e => setTip({ item: items[i], x: e.clientX, y: e.clientY })} onPointerMove={e => setTip(t => t && { ...t, x: e.clientX, y: e.clientY })} onPointerLeave={() => setTip(null)}
+        <a key={x.id + ':' + i} href={`${WH(lang)}/item=${x.id}`} target="_blank" rel="noreferrer" {...hoverTip(setTip, x.id)}
           className="relative block h-9 w-9 overflow-hidden rounded-md border-2 bg-black/40" style={{ borderColor: items[i] ? qColor(items[i]) : 'rgba(255,255,255,.1)' }}>
           <img src={ICON(items[i]?.icon)} alt="" className="h-full w-full" loading="lazy" draggable={false} />
           {x.n > 1 && <span className="absolute bottom-0 right-0.5 text-[10px] font-bold text-white drop-shadow-[0_1px_1px_rgba(0,0,0,1)]">{x.n}</span>}
         </a>
       ))}
-      <Tip tip={tip} />
+      <Tip tip={tip} lang={lang} />
     </div>
   )
 }
@@ -83,7 +100,7 @@ function Gear({ p, lang }) {
   return (
     <div className="grid grid-cols-1 gap-x-3 sm:grid-cols-2">
       {slots.map((x, i) => (
-        <div key={x.s.id} onPointerEnter={e => items[i] && setTip({ item: items[i], x: e.clientX, y: e.clientY })} onPointerLeave={() => setTip(null)}
+        <div key={x.s.id} {...(x.id ? hoverTip(setTip, x.id) : {})}
           className="flex h-8 items-center gap-1.5 rounded-md px-1 hover:bg-white/[0.04]">
           {x.id ? <img src={ICON(items[i]?.icon)} alt="" className="h-6 w-6 shrink-0 rounded border" style={{ borderColor: items[i] ? qColor(items[i]) : 'rgba(255,255,255,.15)' }} loading="lazy" />
             : <span className="h-6 w-6 shrink-0 rounded border border-dashed border-white/10" />}
@@ -93,7 +110,7 @@ function Gear({ p, lang }) {
           </span>
         </div>
       ))}
-      <Tip tip={tip} />
+      <Tip tip={tip} lang={lang} />
     </div>
   )
 }
@@ -126,19 +143,77 @@ function Bars({ list, kind }) {
 function Auctions({ p, lang }) {
   const list = p.auctions || []
   const items = useTips(list.map(a => a.id), lang)
+  const [tip, setTip] = useState(null)
   if (!list.length) return <p className="px-1 text-[12px] text-ink-500">Keine Auktionen{p.auctionsAt ? '' : ' gesehen (im Spiel einmal das Auktionshaus öffnen, Reiter „Auktionen“)'}.</p>
   return (
     <div className="space-y-px">
       {list.map((a, i) => (
-        <a key={i} href={`${WH(lang)}/item=${a.id}`} target="_blank" rel="noreferrer" className="flex h-8 items-center gap-1.5 rounded-md px-1 hover:bg-white/[0.04]">
+        <a key={i} href={`${WH(lang)}/item=${a.id}`} target="_blank" rel="noreferrer" {...hoverTip(setTip, a.id)} className="flex h-8 items-center gap-1.5 rounded-md px-1 hover:bg-white/[0.04]">
           <img src={ICON(items[i]?.icon)} alt="" className="h-6 w-6 shrink-0 rounded border" style={{ borderColor: items[i] ? qColor(items[i]) : 'rgba(255,255,255,.15)' }} loading="lazy" />
           <span className="min-w-0 flex-1 truncate text-[12px]" style={items[i] ? { color: qColor(items[i]) } : undefined}>{items[i]?.name || `Item ${a.id}`}{a.c > 1 ? ` x${a.c}` : ''}</span>
           {a.s ? <span className="shrink-0 text-[11px] text-emerald-300">verkauft</span> : <span className="shrink-0 text-[10.5px] text-ink-500">{AUCTION_LEFT[a.l] || ''}</span>}
           <span className="w-24 shrink-0 text-right text-[11.5px]"><Coins c={a.b} /></span>
         </a>
       ))}
+      <Tip tip={tip} lang={lang} />
     </div>
   )
+}
+
+/** A profession: its bar, and everything it can make (from the game's profession window). */
+function Profession({ prof, recipes, lang }) {
+  const [open, setOpen] = useState(false)
+  const [tip, setTip] = useState(null)
+  const list = recipes || []
+  const items = useTips(open ? list.filter(r => r.id > 0).map(r => r.id) : [], lang)
+  const byId = {}
+  list.filter(r => r.id > 0).forEach((r, k) => { byId[r.id] = items[k] })
+  return (
+    <div className="rounded-lg bg-white/[0.025] px-2 py-1.5">
+      <button type="button" onClick={() => setOpen(v => !v)} className="flex w-full items-baseline gap-2 text-left text-[12.5px]">
+        <ChevronDown size={13} className={`shrink-0 self-center text-ink-500 transition-transform ${open ? '' : '-rotate-90'}`} />
+        <span className="min-w-0 flex-1 truncate font-semibold text-ink-100">{prof.n}</span>
+        <span className="shrink-0 text-[11px] text-ink-400">{list.length ? `${list.length} Rezepte` : ''}</span>
+        <span className="shrink-0 tabular-nums text-[11.5px] text-ink-300">{prof.r}/{prof.m}</span>
+      </button>
+      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-white/[0.07]">
+        <div className="h-full rounded-full bg-gradient-to-r from-brand-400 to-rose-400" style={{ width: `${prof.m > 0 ? Math.min(100, (prof.r / prof.m) * 100) : 0}%` }} />
+      </div>
+      {open && (
+        list.length ? (
+          <div className="mt-1.5 grid grid-cols-1 gap-x-3 sm:grid-cols-2">
+            {list.map((r, k) => {
+              const it = r.id > 0 ? byId[r.id] : null
+              const url = r.id > 0 ? `${WH(lang)}/item=${r.id}` : r.id < 0 ? `${WH(lang)}/spell=${-r.id}` : null
+              return (
+                <a key={k} href={url || undefined} target="_blank" rel="noreferrer" {...(r.id > 0 ? hoverTip(setTip, r.id, r.n) : {})}
+                  className="flex h-7 items-center gap-1.5 rounded-md px-1 hover:bg-white/[0.05]">
+                  {r.id > 0 ? <img src={ICON(it?.icon)} alt="" className="h-5 w-5 shrink-0 rounded border" style={{ borderColor: it ? qColor(it) : 'rgba(255,255,255,.12)' }} loading="lazy" />
+                    : <span className="grid h-5 w-5 shrink-0 place-items-center rounded border border-white/10 text-brand-300"><Wand2 size={11} /></span>}
+                  <span className="min-w-0 flex-1 truncate text-[12px]" style={it ? { color: qColor(it) } : undefined}>{r.n}</span>
+                </a>
+              )
+            })}
+          </div>
+        ) : <p className="mt-1 text-[11.5px] text-ink-500">Rezepte kommen, sobald du im Spiel das Berufsfenster einmal öffnest.</p>
+      )}
+      <Tip tip={tip} lang={lang} />
+    </div>
+  )
+}
+
+function Professions({ p, lang }) {
+  if (!p.profs?.length) return <p className="px-1 text-[12px] text-ink-500">Keine Berufe.</p>
+  return <div className="space-y-1.5">{p.profs.map(x => <Profession key={x.n} prof={x} recipes={recipeList(p.recipes?.[x.n])} lang={lang} />)}</div>
+}
+
+/** The character's talents in the trees (read only). */
+function TalentTrees({ talents }) {
+  const [d, setD] = useState(talentsNow)
+  useEffect(() => { if (!d) loadTalents().then(setD) }, [d])
+  const build = d && talents ? decode(d, talents) : null
+  if (!build) return <p className="px-1 text-[12px] text-ink-500">{talents ? 'Lädt …' : 'Keine Talente geteilt.'}</p>
+  return <div className="h-[30rem] overflow-hidden rounded-lg border border-white/[0.06]"><Talents build={build} onChange={() => {}} readOnly compact /></div>
 }
 
 function Quests({ p, lang, onWeb }) {
@@ -191,7 +266,7 @@ export default function CharSheet({ p, lang = 'de', compact = false, extra = nul
   const xp = p.xpMax ? Math.min(100, (p.xp / p.xpMax) * 100) : 0
   const tabs = [
     ['home', 'Übersicht'], ['gear', 'Ausrüstung', !!p.gear], ['inv', 'Taschen', p.inv != null], ['bank', 'Bank', p.bank != null],
-    ['auctions', 'Auktionen', p.auctions != null], ['profs', 'Berufe', !!p.profs?.length], ['reps', 'Ruf', !!p.reps?.length], ['quests', 'Quests', !!p.quests?.length],
+    ['talents', 'Talente', !!p.talents], ['auctions', 'Auktionen', p.auctions != null], ['profs', 'Berufe', !!p.profs?.length], ['reps', 'Ruf', !!p.reps?.length], ['quests', 'Quests', !!p.quests?.length],
   ].filter(t => t[2] !== false)
   const now = tabs.some(t => t[0] === tab) ? tab : 'home'
   const pts = treePoints(p.talents)
@@ -201,7 +276,7 @@ export default function CharSheet({ p, lang = 'de', compact = false, extra = nul
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="shrink-0 px-2 pt-2">
         <div className="flex flex-wrap items-baseline gap-x-1.5">
-          <span className="truncate text-[15px] font-semibold" style={{ color: cls?.color }}>{p.name}</span>
+          <span className="truncate text-[15px] font-semibold" style={{ color: cls?.color }}>{nameOf(p)}</span>
           <span className="truncate text-[11.5px] text-ink-400">Stufe {p.level} {cls?.name}{p.realm ? ` · ${p.realm}` : ''}{p.guild ? ` · <${p.guild}>` : ''}</span>
         </div>
         {p.level < 60 && p.xpMax > 0 && (
@@ -239,7 +314,7 @@ export default function CharSheet({ p, lang = 'de', compact = false, extra = nul
               {p.profs?.length > 0 && <Bars list={p.profs} kind="profs" />}
               {rest && (
                 <p className="text-[11.5px] leading-snug text-ink-400">
-                  Erholt beim letzten Speichern: {Math.round((p.rested || 0) / p.xpMax * 100)} %, {p.resting ? 'im Gasthaus oder in der Stadt' : 'draußen'}. Jetzt etwa <b className="text-sky-300">{Math.round(rest.pct)} %</b> einer Stufe{rest.full ? `, voll (150 %) in ${hoursText(rest.full)}` : ' (voll)'}.
+                  Erholt beim letzten Speichern: {Math.round((p.rested || 0) / p.xpMax * 100)} %, {p.resting ? 'im Gasthaus oder in der Stadt' : 'draußen'}. Jetzt etwa <b className="text-sky-300">{Math.round(rest.pct)} %</b> einer Stufe{rest.full ? `, voll (150 %) in ${hoursText(rest.full)}` : ' (voll)'}
                 </p>
               )}
             </div>
@@ -255,7 +330,8 @@ export default function CharSheet({ p, lang = 'de', compact = false, extra = nul
           </>
         )}
         {now === 'auctions' && <Auctions p={p} lang={lang} />}
-        {now === 'profs' && <Bars list={p.profs} kind="profs" />}
+        {now === 'profs' && <Professions p={p} lang={lang} />}
+        {now === 'talents' && <TalentTrees talents={p.talents} />}
         {now === 'reps' && <Bars list={p.reps} kind="reps" />}
         {now === 'quests' && <Quests p={p} lang={lang} onWeb={onWeb} />}
       </div>
@@ -263,24 +339,56 @@ export default function CharSheet({ p, lang = 'de', compact = false, extra = nul
   )
 }
 
-/** A friend's (or your) characters from the account: chips, then the sheet. */
+/** A character as a card (overview of all of them). */
+export function CharCard({ p, onOpen }) {
+  const cls = CLASSES[p.cls]
+  const rest = restedNow(p)
+  const pts = treePoints(p.talents)
+  return (
+    <button type="button" onClick={onOpen} className="group flex flex-col gap-1 rounded-xl border border-white/[0.06] bg-white/[0.025] p-2.5 text-left hover:border-white/15 hover:bg-white/[0.05]">
+      <div className="flex items-baseline gap-1.5">
+        <span className="min-w-0 truncate text-[14px] font-semibold" style={{ color: cls?.color }}>{nameOf(p)}</span>
+        <span className="shrink-0 text-[11.5px] text-ink-400">{p.level} {cls?.name}</span>
+      </div>
+      <div className="flex flex-wrap gap-x-2 text-[11.5px] text-ink-400">
+        {p.zone && <span className="truncate">{p.zone}</span>}
+        {p.guild && <span className="truncate">&lt;{p.guild}&gt;</span>}
+      </div>
+      <div className="flex flex-wrap items-center gap-x-2 text-[11.5px]">
+        {p.money != null && <Coins c={p.money} />}
+        {p.talents && <span className="tabular-nums text-ink-300">{pts.join('/')}</span>}
+        {rest && rest.now > 0 && <span className="text-sky-300">Erholt {Math.round(rest.pct)} %</span>}
+      </div>
+      {p.profs?.length > 0 && <div className="truncate text-[11px] text-ink-500">{p.profs.map(x => `${x.n} ${x.r}`).join(' · ')}</div>}
+      <div className="text-[10.5px] text-ink-600">Stand {ago(p.at)}</div>
+    </button>
+  )
+}
+
+/** A friend's (or your) characters from the account: all of them at a glance, a click opens one. */
 export function CharList({ rows, lang = 'de', compact = false, empty = null, onWeb }) {
   const [pick, setPick] = useState(null)
   if (!rows?.length) return empty
-  const list = rows.map(r => ({ ...r.data, key: r.key }))
-  const p = list.find(x => x.key === pick) || list[0]
+  const list = rows.map(r => ({ ...r.data, key: r.key })).sort((a, b) => (b.level || 0) - (a.level || 0) || (b.at || 0) - (a.at || 0))
+  const p = pick && list.find(x => x.key === pick)
+  if (!p) {
+    return (
+      <div className={`grid gap-2 ${compact ? 'grid-cols-1' : 'grid-cols-1 sm:grid-cols-2 xl:grid-cols-3'}`}>
+        {list.map(x => <CharCard key={x.key} p={x} onOpen={() => setPick(x.key)} />)}
+      </div>
+    )
+  }
   return (
-    <div className="flex min-h-[18rem] flex-col">
-      {list.length > 1 && (
-        <div className="flex shrink-0 gap-0.5 overflow-x-auto pb-1">
-          {list.map(x => (
-            <button key={x.key} type="button" onClick={() => setPick(x.key)}
-              className={`flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-[11.5px] ${x.key === p.key ? 'bg-white/[0.1] text-white' : 'text-ink-400 hover:bg-white/[0.06] hover:text-white'}`}>
-              <span className="font-semibold" style={{ color: CLASSES[x.cls]?.color }}>{x.name}</span><span className="text-ink-500">{x.level}</span>
-            </button>
-          ))}
-        </div>
-      )}
+    <div className="flex min-h-[20rem] flex-col">
+      <div className="flex shrink-0 items-center gap-1 overflow-x-auto pb-1">
+        <button type="button" onClick={() => setPick(null)} className="flex h-6 shrink-0 items-center gap-1 rounded-md bg-white/[0.06] px-2 text-[11.5px] text-ink-200 hover:bg-white/[0.1]"><ChevronLeft size={12} /> Alle {list.length}</button>
+        {list.length > 1 && list.map(x => (
+          <button key={x.key} type="button" onClick={() => setPick(x.key)}
+            className={`flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-[11.5px] ${x.key === p.key ? 'bg-white/[0.1] text-white' : 'text-ink-400 hover:bg-white/[0.06] hover:text-white'}`}>
+            <span className="font-semibold" style={{ color: CLASSES[x.cls]?.color }}>{nameOf(x)}</span><span className="text-ink-500">{x.level}</span>
+          </button>
+        ))}
+      </div>
       <CharSheet p={p} lang={lang} compact={compact} onWeb={onWeb} tabKey="wowFriendTab" />
     </div>
   )

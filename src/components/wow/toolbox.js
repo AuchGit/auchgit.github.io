@@ -29,7 +29,7 @@ export const BOXES = [{
     // own (in our look: components/toolbox/Talents.jsx, Items.jsx); url = Wowhead's, for "there instead"
     { id: 'talents', name: 'Talente', own: 'talents', url: `${WH}/talent-calc`, Icon: Sparkles, match: /^\/talent-calc/ },
     { id: 'items', name: 'Items', own: 'items', url: `${WH}/items`, Icon: Swords, match: /^\/(items|item=)/ },
-    { id: 'gear', name: 'Charakter', own: 'gear', url: `${WH}/items`, Icon: Shield, match: /^$/ },
+    { id: 'gear', name: 'Planer', own: 'gear', url: `${WH}/items`, Icon: Shield, match: /^$/ },
     // what the AuchAddOn brought from the game (desktop app: components/toolbox/Game.jsx)
     { id: 'game', name: 'Charaktere', own: 'game', desktop: true, url: `${WH}/quests`, Icon: Gamepad2, match: /(?!)/ },
     { id: 'quests', name: 'Quests', url: `${WH}/quests`, Icon: Scroll, match: /^\/(quests|quest=)/ },

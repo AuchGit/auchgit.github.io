@@ -155,7 +155,7 @@ function Tree({ d, b, t, s, gap, onCell, onHover, color }) {
  * compact: smaller header (overlay window); the symbols always grow with the room there is.
  * areaRef: gets the trees' area (for talentsFit).
  */
-export default function Talents({ build, onChange, name = '', onName, compact = false, areaRef }) {
+export default function Talents({ build, onChange, name = '', onName, compact = false, areaRef, readOnly = false }) {
   const [d, setD] = useState(talentsNow)
   const [tip, setTip] = useState(null) // { t, i, rect, touch }
   const [showOrder, setShowOrder] = useState(() => load('talentsOrder', false))
@@ -188,6 +188,7 @@ export default function Talents({ build, onChange, name = '', onName, compact = 
     return { left: a.left - o.left, right: a.right - o.left, top: a.top - o.top, bottom: a.bottom - o.top }
   }
   function cell(t, i, e, how) {
+    if (readOnly) return
     if (how === 'add' && (lastPointer === 'touch' || lastPointer === 'pen')) { setTip({ t, i, rect: rectOf(e.currentTarget), touch: true }); return }
     const next = how === 'all' ? addAll(d, b, t, i) : how === 'none' ? removeAll(d, b, t, i) : how === 'add' ? add(d, b, t, i) : remove(d, b, t, i)
     if (next !== b) onChange(next)
@@ -205,7 +206,7 @@ export default function Talents({ build, onChange, name = '', onName, compact = 
   return (
     <div ref={root} className="relative flex h-full min-h-0 flex-col" onPointerDown={() => tip?.touch && setTip(null)}>
       <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b border-white/[0.06] px-1.5 py-1">
-        <div className="flex items-center gap-0.5">
+        <div className={`flex items-center gap-0.5 ${readOnly ? 'hidden' : ''}`}>
           {Object.entries(d.classes).map(([id, c]) => (
             <button key={id} title={c.name} onClick={() => id !== b.cls && onChange(emptyBuild(d, id))}
               className={`rounded-md border-2 p-px transition ${id === b.cls ? '' : 'border-transparent opacity-60 hover:opacity-100'}`}
@@ -225,8 +226,8 @@ export default function Talents({ build, onChange, name = '', onName, compact = 
         <span className="text-[12px] tabular-nums text-ink-400">Stufe {levelFor(b) ?? '–'}</span>
         <button title="Reihenfolge beim Leveln (so wie du klickst)" onClick={toggleOrder}
           className={`grid h-6 w-6 place-items-center rounded-md hover:bg-white/[0.07] hover:text-white ${showOrder ? 'bg-white/[0.1] text-white' : 'text-ink-400'}`}><ListOrdered size={13} /></button>
-        <button title="Alle Punkte raus" onClick={() => onChange(emptyBuild(d, b.cls))} disabled={!used}
-          className="grid h-6 w-6 place-items-center rounded-md text-ink-400 hover:bg-white/[0.07] hover:text-white disabled:opacity-35"><RotateCcw size={13} /></button>
+        {!readOnly && <button title="Alle Punkte raus" onClick={() => onChange(emptyBuild(d, b.cls))} disabled={!used}
+          className="grid h-6 w-6 place-items-center rounded-md text-ink-400 hover:bg-white/[0.07] hover:text-white disabled:opacity-35"><RotateCcw size={13} /></button>}
       </div>
       <div ref={area} className="min-h-0 flex-1 overflow-auto p-1.5" onScroll={() => setTip(null)}>
         <div className="flex flex-wrap justify-center gap-1.5">

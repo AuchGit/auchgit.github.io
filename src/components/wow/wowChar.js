@@ -1,8 +1,9 @@
 // A WoW character as the AuchAddOn saves it (AuchAddOnDB.players): pure helpers, no imports,
 // shared by the launcher and the website (scripts/sync-web-toolbox.py copies this file).
-//   { name, realm, cls, race, level, xp, xpMax, money, zone, guild, talents, free, gear "id.id…",
+//   { name, full (first and last name, WoW Forever), realm, cls, race, level, xp, xpMax, money, zone, guild, talents, free, gear "id.id…",
 //     bags "id:SLOT …", inv "id:n …", bank "id:n …", bankAt, auctions [{ id, c, b, l, s }],
-//     auctionsAt, profs [{ n, r, m }], reps [{ n, s, v, m }], quests [...], rested, resting, at }
+//     auctionsAt, profs [{ n, r, m }], recipes { [profession]: "id:name;…" }, reps [{ n, s, v, m }], quests [...],
+//     rested, resting, at }
 
 /**
  * Rested experience now, worked out from the last save: 5 % of a level per 8 hours in an inn
@@ -18,12 +19,20 @@ export function restedNow(p, nowSec = Date.now() / 1000) {
   return { now, pct: (now / p.xpMax) * 100, full: now >= cap ? 0 : ((cap - now) / per8) * 8, resting: !!p.resting }
 }
 
+/** The name to show: the whole one (first and last) when the game gave it. */
+export const nameOf = p => (p?.full && String(p.full).trim()) || p?.name || ''
+
 /** "12 Std." / "3 T." */
 export const hoursText = h => (h >= 48 ? `${Math.round(h / 24)} T.` : `${Math.max(1, Math.round(h))} Std.`)
 
 /** Items "id:count id:count" -> [{ id, n }]. */
 export function itemList(text) {
   return String(text || '').split(' ').map(x => { const [id, n] = x.split(':'); return { id: Number(id), n: Number(n) || 1 } }).filter(x => x.id > 0)
+}
+
+/** Recipes of one profession ("id:name;…", negative id = a spell like an enchant) -> [{ id, n }]. */
+export function recipeList(text) {
+  return String(text || '').split(';').map(x => { const k = x.indexOf(':'); return k > 0 ? { id: Number(x.slice(0, k)) || 0, n: x.slice(k + 1) } : null }).filter(x => x && x.n)
 }
 
 /** Gold, silver, copper from copper. */
@@ -64,13 +73,13 @@ export const SHARE_PARTS = [
 /** A character for your account (only what you share). */
 export function forCloud(p, share = {}) {
   const on = k => share[k] !== false
-  const out = { name: p.name, realm: p.realm, cls: p.cls, race: p.race, level: p.level, xp: p.xp, xpMax: p.xpMax, zone: p.zone, guild: p.guild, at: p.at }
+  const out = { name: p.name, full: p.full, realm: p.realm, cls: p.cls, race: p.race, level: p.level, xp: p.xp, xpMax: p.xpMax, zone: p.zone, guild: p.guild, at: p.at }
   if (on('gear')) { out.gear = p.gear; out.bags = p.bags }
   if (on('talents')) { out.talents = p.talents; out.free = p.free }
   if (on('inv')) out.inv = p.inv
   if (on('bank')) { out.bank = p.bank; out.bankAt = p.bankAt }
   if (on('auctions')) { out.auctions = p.auctions; out.auctionsAt = p.auctionsAt }
-  if (on('profs')) out.profs = p.profs
+  if (on('profs')) { out.profs = p.profs; out.recipes = p.recipes }
   if (on('reps')) out.reps = p.reps
   if (on('money')) out.money = p.money
   if (on('quests')) out.quests = (p.quests || []).slice(0, 25)
