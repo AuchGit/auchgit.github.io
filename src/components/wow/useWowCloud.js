@@ -32,6 +32,15 @@ export const useWowCloud = create((set, get) => ({
     if (!supabase || !userId || get().off || share.on === false) return 0
     let sent = {}
     try { sent = JSON.parse(localStorage.getItem(SENT)) || {} } catch { /* none */ }
+    // the same character under its old key (AuchAddOn up to 1.6: "Name-Lastname" in WoW Forever) goes
+    if (!get().loaded) await get().load()
+    const keys = new Set((players || []).map(p => p?.key))
+    const stale = get().rows.filter(r => r.user_id === userId && !keys.has(r.key) && (players || []).some(p =>
+      p?.full && p.name === r.data?.name && p.cls === r.data?.cls && r.key === `${p.name}-${p.full.split(' ').slice(1).join(' ')}`))
+    for (const r of stale) {
+      await get().remove(userId, r.key).catch(() => {})
+      delete sent[userId + ':' + r.key]
+    }
     const rows = []
     for (const p of players || []) {
       if (!p?.key || !p.name) continue

@@ -4,13 +4,14 @@ import { useEffect } from 'react'
 import { Swords } from 'lucide-react'
 import { useWowCloud } from './useWowCloud'
 import { CharList } from './CharSheet'
+import { oneEach } from './wowChar'
 
 /** local: your characters straight from the game (launcher, your own profile) when the account has none */
 export default function ProfileChars({ userId, compact = false, own = false, className = 'card p-5', local = null }) {
   const rows = useWowCloud(s => s.rows)
   const loaded = useWowCloud(s => s.loaded)
   useEffect(() => { useWowCloud.getState().load().catch(() => {}) }, [userId])
-  const cloud = rows.filter(r => r.user_id === userId)
+  const cloud = oneEach(rows.filter(r => r.user_id === userId))
   const mine = cloud.length ? cloud : (own && local?.length ? local : [])
   if (!mine.length && (!own || !loaded)) return null
   return (

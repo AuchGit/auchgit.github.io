@@ -90,6 +90,24 @@ export const SHARE_PARTS = [
 ]
 
 /** A character for your account (only what you share). */
+/**
+ * One card per character: AuchAddOn up to 1.6 saved WoW Forever's last name as the realm
+ * ("Totem-Ingrid"), newer ones under "Totem": the same character twice in the account. The
+ * newest stays. rows: [{ key, data, updated_at }].
+ */
+export function oneEach(rows) {
+  const by = new Map()
+  for (const r of rows || []) {
+    const d = r.data || {}
+    const full = d.full || d.name || r.key
+    const realm = d.realm && d.full && d.full.endsWith(' ' + d.realm) ? '' : (d.realm || '')
+    const id = `${r.user_id || ''}|${full}|${d.cls || ''}|${realm}`
+    const old = by.get(id)
+    if (!old || String(r.updated_at || '') > String(old.updated_at || '')) by.set(id, r)
+  }
+  return [...by.values()]
+}
+
 export function forCloud(p, share = {}) {
   const on = k => share[k] !== false
   const out = { name: p.name, full: p.full, realm: p.realm, cls: p.cls, race: p.race, level: p.level, xp: p.xp, xpMax: p.xpMax, zone: p.zone, guild: p.guild, at: p.at }
