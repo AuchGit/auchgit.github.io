@@ -35,7 +35,7 @@ import { BOARD_MAX_SECONDS, addBoard, boardData, listBoard, removeBoard } from '
 const PREFIX = 'auch.'
 const load = (k, d) => { try { const r = localStorage.getItem(PREFIX + k); return r == null ? d : JSON.parse(r) } catch { return d } }
 const save = (k, v) => { try { localStorage.setItem(PREFIX + k, JSON.stringify(v)) } catch { /* blocked */ } }
-const setSetting = (k, v) => save('settings', { ...load('settings', {}), [k]: v })
+const setSetting = (k, v) => { save('settings', { ...load('settings', {}), [k]: v }); gateSet = null }
 
 // Which call someone is in goes into everyone's presence only as a tag of the
 // chat's id: people in that chat can tell (they know the id), nobody else can
@@ -104,7 +104,7 @@ const ALONE_MS = 15000
 // wobbled, the call itself didn't): they stay in the call this long. Hanging up sends 'bye'.
 const GRACE_MS = 30000
 const lost = new Map() // user id -> since when the presence is gone (connection still up)
-const byeFrom = new Set() // hung up for real: not kept
+const byeAt = new Map() // user id -> when they hung up for real (not kept then)
 let graceTimer = null
 const log = msg => { try { useCall.getState().onLog?.('call: ' + msg) } catch { /* no log */ } }
 let aloneTimer = null
@@ -118,6 +118,15 @@ const peers = new Map() // userId -> { pc, polite, makingOffer, ignoreOffer, kin
 
 const me = () => useSocial.getState().session?.user?.id
 const settings = () => load('settings', {})
+// the gate asks 50 times a second: the settings read again at most 4 times a second (a change of
+// mode or voice level takes effect a moment later; everything else reads them fresh)
+let gateSet = null, gateSetAt = 0
+const settingsForGate = () => {
+  const now = performance.now()
+  if (!gateSet || now - gateSetAt > 250) { gateSet = settings(); gateSetAt = now }
+  return gateSet
+}
+const meterBuf = new Float32Array(512)
 
 function audioCtx() {
   if (!ctx || ctx.state === 'closed') {
@@ -385,7 +394,7 @@ export const useCall = create((set, get) => ({
       .on('broadcast', { event: 'bye' }, ({ payload }) => {
         const id = payload?.uid
         if (!id || (payload.inst && get().members[id]?.inst && payload.inst !== get().members[id].inst)) return
-        byeFrom.add(id)
+        byeAt.set(id, Date.now())
         lost.delete(id)
         get()._sync()
       })
@@ -409,7 +418,7 @@ export const useCall = create((set, get) => ({
       try { await Promise.race([channel.send({ type: 'broadcast', event: 'bye', payload: { uid: me(), inst: INST } }), new Promise(r => setTimeout(r, 300))]) } catch { /* offline */ }
     }
     lost.clear()
-    byeFrom.clear()
+    byeAt.clear()
     clearTimeout(graceTimer)
     graceTimer = null
     clearInterval(meterTimer)
@@ -522,13 +531,16 @@ export const useCall = create((set, get) => ({
     // the server wobbled; dropping them would cut the call although it worked)
     const prev = get().members
     const nowMs = Date.now()
-    for (const id of Object.keys(members)) { lost.delete(id); byeFrom.delete(id) }
+    for (const id of Object.keys(members)) {
+      lost.delete(id)
+      if (!prev[id]) byeAt.delete(id) // back in the call after hanging up
+    }
     for (const id of Object.keys(prev)) {
       if (members[id]) continue
       const st = peers.get(id)?.pc.connectionState
       const up = st === 'connected' || st === 'connecting'
       const since = lost.get(id) ?? nowMs
-      if (up && !byeFrom.has(id) && nowMs - since < GRACE_MS) {
+      if (up && !byeAt.has(id) && nowMs - since < GRACE_MS) {
         if (!lost.has(id)) log(`${prev[id].name || id}: presence gone, connection still ${st}, kept`)
         lost.set(id, since)
         members[id] = prev[id]
@@ -725,7 +737,7 @@ export const useCall = create((set, get) => ({
   },
 
   _meter() {
-    const buf = new Float32Array(512)
+    const buf = meterBuf
     const next = {}
     if (local.micAnalyser && !get().muted) next.me = rms(local.micAnalyser, buf) > SPEAK
     for (const [id, p] of peers) if (p.audio.voice) next[id] = rms(p.audio.voice.analyser, buf) > SPEAK
@@ -736,12 +748,13 @@ export const useCall = create((set, get) => ({
   /** The gate: open / by voice / push-to-talk (every 20 ms while in a call). */
   _gate() {
     if (!local.micGate || !local.micPre) return
-    const mode = micModeOf(settings())
+    const cfg = settingsForGate()
+    const mode = micModeOf(cfg)
     const now = performance.now()
     let open = true
     const db = dbOf(rms(local.micPre, gateBuf))
     if (mode === 'voice') {
-      if (db > (settings().callVoiceLevel ?? -48)) gate.last = now
+      if (db > (cfg.callVoiceLevel ?? -48)) gate.last = now
       open = now - gate.last < VOICE_HANG
     } else if (mode === 'ptt') open = gate.ptt || now - gate.up < PTT_TAIL
     if (Math.abs(db - get().inputDb) > 2) set({ inputDb: Math.round(db) })
