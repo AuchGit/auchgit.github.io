@@ -529,10 +529,13 @@ export function LiveBadge({ className = '' }) {
   const call = useCall(s => s.call)
   const sharing = useCall(s => s.sharing)
   const myScreens = useCall(s => s.myScreens) || []
+  const strokes = useInk(s => s.strokes)
   if (!call || (!sharing && !myScreens.length)) return null
   const c = useCall.getState()
+  const me = callBus.me()
   const parts = [
-    ...myScreens.map(x => ({ key: x.id, label: `${x.name}${x.sound ? ' mit Ton' : ''}${x.ink && x.ink !== 'none' ? ', Malen an' : ''}`, stop: () => c.stopScreen(x.id), wipe: x.ink && x.ink !== 'none' ? () => c.inkClear(x.id) : null })),
+    ...myScreens.map(x => ({ key: x.id, label: `${x.name}${x.sound ? ' mit Ton' : ''}${x.ink && x.ink !== 'none' ? ', Malen an' : ''}`, stop: () => c.stopScreen(x.id),
+      wipe: (x.ink && x.ink !== 'none') || (strokes[`${me}:${x.id}`] || []).length ? () => c.inkClear(x.id) : null })),
     sharing && { key: 'program', label: `Ton: ${sharing.name}`, stop: () => c.shareProgram(null) },
   ].filter(Boolean)
   return (
@@ -830,15 +833,26 @@ export function OnePicture({ k }) {
   return <CallTile t={t} pinned={false} lone />
 }
 
-/** "May I draw?" from the others, on a screen you share. */
+/** "May I draw?" from the others, on a screen you share; and wiping off what was drawn there
+ * (always, as soon as something is on it, whether drawing is still allowed or not). */
 export function InkAsks({ className = '' }) {
   const asks = useCall(s => s.inkAsks) || []
   const screens = useCall(s => s.myScreens) || []
+  const strokes = useInk(s => s.strokes)
+  const me = callBus.me()
+  const drawn = screens.filter(x => (strokes[`${me}:${x.id}`] || []).length > 0)
   const fresh = asks.filter(a => Date.now() - a.at < 120000)
-  if (!fresh.length) return null
+  if (!fresh.length && !drawn.length) return null
   const c = useCall.getState()
   return (
     <div data-hit style={{ pointerEvents: 'auto' }} className={`space-y-1 ${className}`}>
+      {drawn.map(x => (
+        <div key={'wipe' + x.id} className="flex items-center gap-1.5 rounded-xl border border-white/10 bg-ink-900/[0.96] px-2.5 py-1 text-[12px] shadow-lift">
+          <Eraser size={12} className="shrink-0 text-ink-300" />
+          <span className="min-w-0 flex-1 truncate text-ink-200">Auf {screens.length > 1 ? `„${x.name}“` : 'deinem Bildschirm'} ist gemalt</span>
+          <button onClick={() => c.inkClear(x.id)} className="shrink-0 rounded-md bg-white/[0.08] px-2 py-0.5 font-semibold text-ink-100 hover:bg-white/[0.14]">Alles wegwischen</button>
+        </div>
+      ))}
       {fresh.map(a => (
         <div key={a.id + a.by} className="flex flex-wrap items-center gap-1.5 rounded-xl border border-brand-400/30 bg-ink-900/[0.96] px-2.5 py-1.5 text-[12px] shadow-lift animate-pop">
           <Pencil size={12} className="shrink-0 text-brand-300" />

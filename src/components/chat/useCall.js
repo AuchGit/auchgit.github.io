@@ -100,6 +100,13 @@ const boardSources = new Set()
 let ringOutTimer = null
 // Everyone else left: the call ends after a moment alone (time for a reconnect or a device change).
 const ALONE_MS = 15000
+// Someone's presence went away while the connection to them still runs (their line to the server
+// wobbled, the call itself didn't): they stay in the call this long. Hanging up sends 'bye'.
+const GRACE_MS = 30000
+const lost = new Map() // user id -> since when the presence is gone (connection still up)
+const byeFrom = new Set() // hung up for real: not kept
+let graceTimer = null
+const log = msg => { try { useCall.getState().onLog?.('call: ' + msg) } catch { /* no log */ } }
 let aloneTimer = null
 let hadPeople = false
 // Who belongs to the chat of the call (from the database). Anyone else on the
@@ -336,9 +343,10 @@ export const useCall = create((set, get) => ({
     clearTimeout(slow)
     if (get().call?.convId !== convId) { local.micRaw?.getTracks().forEach(t => t.stop()); local.micRaw = null; return } // hung up while the browser asked
     set({ joining: false })
+    log(`${calling ? 'calling' : guest ? 'joining as guest' : 'joining'} (${kind})`)
     useSocial.getState().setCall(convId, guest)
     // brought in, but nobody's there (any more): the call is over
-    if (guest) setTimeout(() => { if (get().call?.convId === convId && !Object.keys(get().members).length) { get().onNotice?.('Der Anruf ist schon vorbei.'); get().leave() } }, 9000)
+    if (guest) setTimeout(() => { if (get().call?.convId === convId && !Object.keys(get().members).length) { get().onNotice?.('Der Anruf ist schon vorbei.'); get().leave('guest, nobody there') } }, 9000)
     clearTimeout(ringOutTimer)
     if (calling) {
       // phones of the others ring too (push notification, if they turned it on)
@@ -347,7 +355,7 @@ export const useCall = create((set, get) => ({
         if (!get().outgoing || get().call?.convId !== convId) return
         // nobody came: the call ends (direct and group)
         get().onNotice?.(kind === 'direct' ? `${title} geht nicht ran.` : 'Keiner ist rangegangen.')
-        get().leave()
+        get().leave('nobody answered')
       }, RING_OUT_MS)
     }
     get().refreshDevices()
@@ -364,17 +372,26 @@ export const useCall = create((set, get) => ({
         if (payload?.guest) { if (get().guests.includes(payload.from)) get().onNotice?.(`${payload.name || 'Jemand'} kommt gerade nicht.`); return }
         // the called one doesn't want to: a direct call ends, a group call keeps waiting for the others
         if (!get().outgoing) return
-        if (get().call?.kind === 'direct') { get().onNotice?.(`${payload?.name || 'Die andere Seite'} hat abgelehnt.`); get().leave() }
+        if (get().call?.kind === 'direct') { get().onNotice?.(`${payload?.name || 'Die andere Seite'} hat abgelehnt.`); get().leave('declined') }
       })
       .on('broadcast', { event: 'ink' }, ({ payload }) => { callBus.on.ink?.(payload) })
       // you joined on another device: the call goes on there
       .on('broadcast', { event: 'move' }, ({ payload }) => {
         if (payload?.uid !== uid || payload.inst === INST || get().call?.convId !== convId) return
         get().onNotice?.('Der Anruf läuft jetzt auf deinem anderen Gerät weiter.')
-        get().leave()
+        get().leave('moved to another device')
+      })
+      // someone hung up for real (not just a wobble of their line): gone right away
+      .on('broadcast', { event: 'bye' }, ({ payload }) => {
+        const id = payload?.uid
+        if (!id || (payload.inst && get().members[id]?.inst && payload.inst !== get().members[id].inst)) return
+        byeFrom.add(id)
+        lost.delete(id)
+        get()._sync()
       })
       .on('presence', { event: 'sync' }, () => get()._sync())
       .subscribe(status => {
+        log(`line to the server: ${status}`)
         if (status !== 'SUBSCRIBED') return
         get()._announce()
         channel?.send({ type: 'broadcast', event: 'move', payload: { uid, inst: INST } })
@@ -385,7 +402,16 @@ export const useCall = create((set, get) => ({
     if (video) get().toggleCamera().catch(() => {})
   },
 
-  async leave() {
+  async leave(why) {
+    if (get().call) log(`left (${typeof why === 'string' ? why : 'hung up'})`)
+    // the others drop you right away (instead of waiting whether your line comes back)
+    if (channel && get().call) {
+      try { await Promise.race([channel.send({ type: 'broadcast', event: 'bye', payload: { uid: me(), inst: INST } }), new Promise(r => setTimeout(r, 300))]) } catch { /* offline */ }
+    }
+    lost.clear()
+    byeFrom.clear()
+    clearTimeout(graceTimer)
+    graceTimer = null
     clearInterval(meterTimer)
     clearInterval(gateTimer)
     gate.ptt = false
@@ -414,6 +440,23 @@ export const useCall = create((set, get) => ({
     const s = useSocial.getState()
     const { muted, deaf, camera, sharing } = get()
     channel?.track({ inst: INST, name: s.me?.player_name || '', avatar: s.me?.avatar_url || null, muted: muted || !local.micRaw, deaf, video: camera, stream: sharing?.name || null, screens: get().myScreens.map(({ id, name, sound, ink }) => ({ id, name, sound, ink: ink || 'none' })), guests: get().guests })
+  },
+
+  /**
+   * A call with friends from the game (AuchAddOn: friends list, group): with one it's your
+   * direct chat's call; with more, the first one's and the others come in as guests (it rings
+   * for everyone). Already in a call: they're brought into it.
+   */
+  async callFriends(ids, title = null) {
+    const list = [...new Set((ids || []).filter(Boolean))]
+    if (!supabase || !list.length) return
+    if (get().call) { await get().invite(list); return }
+    try {
+      const { data: conv, error } = await supabase.rpc('social_open_direct', { other: list[0] })
+      if (error || !conv) throw error || new Error('no chat')
+      await get().join(conv, { title })
+      if (list.length > 1) await get().invite(list.slice(1))
+    } catch { set({ error: 'Der Anruf ging nicht los.' }) }
   },
 
   /** Bring friends into the call (they don't have to be in its chat): it rings for them. */
@@ -475,13 +518,34 @@ export const useCall = create((set, get) => ({
       if (p && p.inst && m.inst && p.inst !== m.inst) get()._drop(id)
     }
     if (stranger && Date.now() - allowedAt > 10000 && get().call) get()._loadAllowed(get().call.convId)
+    // gone from the presence, but the connection to them still runs: kept a while (their line to
+    // the server wobbled; dropping them would cut the call although it worked)
+    const prev = get().members
+    const nowMs = Date.now()
+    for (const id of Object.keys(members)) { lost.delete(id); byeFrom.delete(id) }
+    for (const id of Object.keys(prev)) {
+      if (members[id]) continue
+      const st = peers.get(id)?.pc.connectionState
+      const up = st === 'connected' || st === 'connecting'
+      const since = lost.get(id) ?? nowMs
+      if (up && !byeFrom.has(id) && nowMs - since < GRACE_MS) {
+        if (!lost.has(id)) log(`${prev[id].name || id}: presence gone, connection still ${st}, kept`)
+        lost.set(id, since)
+        members[id] = prev[id]
+      } else {
+        if (lost.has(id)) log(`${prev[id].name || id}: not back after ${Math.round((nowMs - since) / 1000)} s (${st || 'no connection'})`)
+        lost.delete(id)
+      }
+    }
+    clearTimeout(graceTimer)
+    graceTimer = lost.size ? setTimeout(() => { graceTimer = null; if (get().call) get()._sync() }, 5000) : null
     const before = Object.keys(get().members)
     set({ members, ...(Object.keys(members).length ? { outgoing: null } : {}) })
     if (Object.keys(members).length) { hadPeople = true; clearTimeout(aloneTimer); aloneTimer = null }
     else if (hadPeople && get().call && !aloneTimer) {
       aloneTimer = setTimeout(() => {
         aloneTimer = null
-        if (get().call && !Object.keys(get().members).length) { get().onNotice?.('Anruf beendet: niemand mehr da.'); get().leave() }
+        if (get().call && !Object.keys(get().members).length) { get().onNotice?.('Anruf beendet: niemand mehr da.'); get().leave('alone') }
       }, ALONE_MS)
     }
     if (Object.keys(members).length) clearTimeout(ringOutTimer)
@@ -495,6 +559,8 @@ export const useCall = create((set, get) => ({
       if (now.length) now.reduce((p, x) => p.then(() => get()._signal(x)), Promise.resolve()).catch(() => {})
     }
     const now = Object.keys(members)
+    const came = now.filter(id => !before.includes(id)), went = before.filter(id => !members[id])
+    if (came.length || went.length) log(`people ${now.length}${came.map(id => ' +' + (members[id].name || id)).join('')}${went.map(id => ' -' + (prev[id]?.name || id)).join('')}`)
     if (before.length && now.length !== before.length) useCall.getState().onPeople?.(now.length > before.length ? 'join' : 'leave')
   },
 
@@ -540,6 +606,7 @@ export const useCall = create((set, get) => ({
     }
     pc.ontrack = e => get()._track(id, e)
     pc.onconnectionstatechange = () => {
+      if (pc.connectionState !== 'new' && pc.connectionState !== 'connecting') log(`${get().members[id]?.name || id}: connection ${pc.connectionState}`)
       if (pc.connectionState === 'failed') pc.restartIce?.()
       const m = get().members[id]
       if (m) set({ members: { ...get().members, [id]: { ...m, state: pc.connectionState } } })
@@ -1114,6 +1181,7 @@ export const useCall = create((set, get) => ({
   /** Set by the app: sounds for ringing and people coming / going, short notes ("geht nicht ran"). */
   onRing: null,
   onPeople: null,
+  onLog: null,
   onNotice: null,
 }))
 
